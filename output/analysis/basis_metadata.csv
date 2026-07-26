@@ -1,0 +1,6 @@
+parameter,value
+selected_lambda,1.0000000000000009e-4
+validation_rmse,2.880049678223497
+time_basis_knots,4
+spatial_rbf_centers,16
+rbf_sigma,0.8

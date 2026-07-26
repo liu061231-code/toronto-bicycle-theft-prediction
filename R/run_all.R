@@ -25,3 +25,36 @@ readr::write_csv(
 source("R/02_visualize.R")
 task1_paths <- make_task1_plots(prepared$panel, p$figure_dir)
 stopifnot(all(file.exists(task1_paths)))
+
+source("R/03_model.R")
+splits <- split_panel(prepared$panel)
+basis_recipe <- make_basis_recipe(splits$train)
+model_fit <- fit_models(splits, basis_recipe)
+readr::write_csv(
+  model_fit$metrics,
+  file.path(p$analysis_dir, "model_metrics.csv")
+)
+readr::write_csv(
+  model_fit$test_predictions,
+  file.path(p$analysis_dir, "test_predictions.csv")
+)
+readr::write_csv(
+  tibble::tibble(
+    parameter = c(
+      "selected_lambda", "validation_rmse", "time_basis_knots",
+      "spatial_rbf_centers", "rbf_sigma"
+    ),
+    value = c(
+      model_fit$selected_lambda,
+      model_fit$validation_rmse,
+      length(basis_recipe$time_knots),
+      nrow(basis_recipe$rbf_centers),
+      basis_recipe$rbf_sigma
+    )
+  ),
+  file.path(p$analysis_dir, "basis_metadata.csv")
+)
+model_paths <- make_model_plots(
+  model_fit, prepared$panel, basis_recipe, p$figure_dir
+)
+stopifnot(all(file.exists(model_paths)))
