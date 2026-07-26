@@ -733,3 +733,29 @@ HANDBOOK_SECTIONS = [
         ],
     },
 ]
+
+# Replace the earlier short operational overview with the approved 15-step
+# beginner lab route. Theory chapters and verified results remain unchanged.
+from handbook.core_path import CORE_PATH_SECTIONS
+
+_short_core_titles = {
+    "所需软件和项目文件夹",
+    "步骤1：导入并审计原始数据",
+    "步骤2：构造社区 × 月份面板",
+    "步骤3：完成Task 1时空可视化",
+    "步骤4：构造、拟合与验证模型",
+}
+_insertion_index = next(
+    (
+        index
+        for index, section in enumerate(HANDBOOK_SECTIONS)
+        if section["title"] in _short_core_titles
+    ),
+    len(HANDBOOK_SECTIONS),
+)
+HANDBOOK_SECTIONS = [
+    section
+    for section in HANDBOOK_SECTIONS
+    if section["title"] not in _short_core_titles
+]
+HANDBOOK_SECTIONS[_insertion_index:_insertion_index] = CORE_PATH_SECTIONS
