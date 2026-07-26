@@ -35,7 +35,7 @@ def bullet_list(items, styles):
         leftIndent=18,
         bulletFontName="CN",
         bulletFontSize=7,
-        spaceAfter=7,
+        spaceAfter=5,
     )
 
 
@@ -65,7 +65,34 @@ def callout(title, body, styles, level="core"):
             ]
         )
     )
-    return KeepTogether([box, Spacer(1, 8)])
+    return KeepTogether([box, Spacer(1, 5)])
+
+
+def teaching_note(label, body, styles, tone="core"):
+    palette = {
+        "core": ("#F4F8FA", "#0B6E75"),
+        "result": ("#F1F8F2", "#2F855A"),
+        "warning": ("#FFF7ED", "#C05621"),
+        "rubric": ("#F5F3FF", "#6D28D9"),
+    }
+    background, accent = palette.get(tone, palette["core"])
+    label_p = Paragraph(escape(label), styles["step_label"])
+    body_p = Paragraph(escape(body), styles["teaching_body"])
+    box = Table([[label_p, body_p]], colWidths=[92, 388], hAlign="LEFT")
+    box.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+                ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(accent)),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return [box, Spacer(1, 3)]
 
 
 def formula_box(text, explanation, styles):
@@ -88,7 +115,7 @@ def formula_box(text, explanation, styles):
             ]
         )
     )
-    return KeepTogether([box, Spacer(1, 8)])
+    return KeepTogether([box, Spacer(1, 5)])
 
 
 def code_block(code, caption, styles):
@@ -106,12 +133,12 @@ def code_block(code, caption, styles):
                 ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#BCCCDC")),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 7),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
-    return KeepTogether([box, Spacer(1, 8)])
+    return KeepTogether([box, Spacer(1, 5)])
 
 
 def figure(path, caption, max_width, max_height, styles):
@@ -162,9 +189,9 @@ def data_table(headers, rows, widths, available_width, styles):
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 6),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ]
         )
     )
-    return [result, Spacer(1, 8)]
+    return [result, Spacer(1, 5)]

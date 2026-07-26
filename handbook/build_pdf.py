@@ -28,6 +28,7 @@ from handbook.components import (
     figure,
     formula_box,
     paragraph,
+    teaching_note,
 )
 from handbook.content import HANDBOOK_SECTIONS
 from handbook.styles import build_styles
@@ -184,6 +185,15 @@ def _section_story(section, styles, available_width):
             )
         elif kind == "code":
             story.append(code_block(block["text"], block["caption"], styles))
+        elif kind == "teaching":
+            story.extend(
+                teaching_note(
+                    block["label"],
+                    block["text"],
+                    styles,
+                    block.get("tone", "core"),
+                )
+            )
         elif kind == "figure":
             story.append(
                 figure(
@@ -228,9 +238,7 @@ def build_handbook(output_path):
     story = []
     story.extend(_cover(styles))
     story.extend(_toc(styles))
-    for index, section in enumerate(HANDBOOK_SECTIONS):
-        if index:
-            story.append(PageBreak())
+    for section in HANDBOOK_SECTIONS:
         story.extend(_section_story(section, styles, doc.width))
     doc.multiBuild(story)
     return str(output.resolve())

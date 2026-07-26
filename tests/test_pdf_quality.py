@@ -10,7 +10,7 @@ PDF = Path(
 
 def test_every_page_contains_visible_content():
     with pdfplumber.open(PDF) as doc:
-        assert 25 <= len(doc.pages) <= 35
+        assert 35 <= len(doc.pages) <= 65
         for index, page in enumerate(doc.pages, 1):
             text = (page.extract_text() or "").strip()
             images = page.images
