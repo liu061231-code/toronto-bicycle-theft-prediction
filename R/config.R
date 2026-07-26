@@ -58,8 +58,8 @@ resolve_bicycle_csv <- function(
   )
 }
 
-project_paths <- function() {
-  root <- find_project_root()
+project_paths <- function(root = find_project_root()) {
+  root <- normalizePath(root, mustWork = TRUE)
   list(
     root = root,
     source_csv = resolve_bicycle_csv(root),
