@@ -1,5 +1,19 @@
+find_project_root <- function(start = getwd()) {
+  current <- normalizePath(start, mustWork = TRUE)
+  repeat {
+    if (file.exists(file.path(current, ".git"))) {
+      return(current)
+    }
+    parent <- dirname(current)
+    if (identical(parent, current)) {
+      stop("Could not locate project root from: ", start)
+    }
+    current <- parent
+  }
+}
+
 project_paths <- function() {
-  root <- normalizePath(".", mustWork = TRUE)
+  root <- find_project_root()
   list(
     root = root,
     source_csv = "/Users/liumingyuan/Downloads/four_dataset/bicycle.csv",

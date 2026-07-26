@@ -21,3 +21,7 @@ readr::write_csv(
   prepared$coordinates,
   file.path(p$analysis_dir, "neighborhood_coordinates.csv")
 )
+
+source("R/02_visualize.R")
+task1_paths <- make_task1_plots(prepared$panel, p$figure_dir)
+stopifnot(all(file.exists(task1_paths)))
