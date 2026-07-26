@@ -42,3 +42,21 @@ def test_render_verification_removes_stale_pages():
     assert result.returncode == 0, result.stderr
     assert not stale.exists()
     assert len(list(render_dir.glob("page-*.png"))) == len(PdfReader(str(PDF)).pages)
+
+
+def test_pdf_contains_only_the_reproducible_core_route():
+    with pdfplumber.open(PDF) as doc:
+        text = "\n".join(page.extract_text() or "" for page in doc.pages)
+    for phrase in [
+        "可直接运行",
+        "函数内部原理展开（不单独运行）",
+        "resolve_bicycle_csv",
+        "make_monthly_panel(raw)",
+        "fit_models(splits, basis_recipe)",
+        "model_fit$test_predictions",
+    ]:
+        assert phrase in text
+    assert (
+        "panel, ggplot2::aes(factor(month_of_year), theft_count)"
+        not in text
+    )
