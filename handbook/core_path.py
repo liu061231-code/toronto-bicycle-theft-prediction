@@ -203,7 +203,26 @@ CORE_PATH_SECTIONS = [
                 "季节图：每个箱表示同一月份跨十年的分布；看可重复季节性。",
                 "空间图：每个点是社区中心；颜色和大小表示长期月均数量。",
                 "热力图：一行一个社区、一列一个月；连续高色带表示持续热点。",
-            )
+            ),
+            code(
+                'p_season <- ggplot2::ggplot(\n'
+                '  panel, ggplot2::aes(factor(month_of_year), theft_count)\n'
+                ') + ggplot2::geom_boxplot()\n\n'
+                'p_space <- ggplot2::ggplot(\n'
+                '  hotspots, ggplot2::aes(lon, lat,\n'
+                '    size = mean_monthly, color = mean_monthly)\n'
+                ') + ggplot2::geom_point() + ggplot2::coord_equal()\n\n'
+                'p_heat <- ggplot2::ggplot(\n'
+                '  heat, ggplot2::aes(month, neighborhood, fill = theft_count)\n'
+                ') + ggplot2::geom_tile()',
+                "其余三类 Task 1 图的核心图层",
+            ),
+            note(
+                "其余三图为什么这样写",
+                "`factor(month_of_year)` 把 1–12 当作十二组而不是连续直线；`geom_boxplot()` 比较每组跨年份分布。"
+                "空间图把 lon/lat 映射到位置，把 mean_monthly 同时映射到大小和颜色，`coord_equal()` 防止经纬方向比例失真。"
+                "热力图用 `geom_tile()` 让一个社区月份对应一个色块；正式图还要增加色觉友好色标、标题、图例和来源。",
+            ),
         ],
     ),
     step(
@@ -231,20 +250,25 @@ CORE_PATH_SECTIONS = [
         "把时间、月份、位置和社区名称转换为数值特征列，使线性模型能够表示非线性趋势、周期和空间差异。",
         "回归只能读取数值矩阵 X。基函数负责把我们在 Task 1 看见的结构翻译成模型可以学习的列。",
         "`train` 以及只从训练期确定的 recipe：样条节点、空间中心、缩放尺度和社区水平。输出 x_train 数值矩阵。",
-        'time_bs <- splines::bs(\n'
-        '  train$time_index, degree = 3,\n'
-        '  knots = c(20, 39, 58, 77),\n'
-        '  Boundary.knots = c(1, 120)\n'
-        ')\n'
+        'source("R/03_model.R")\n'
+        'splits <- split_panel(panel)\n'
+        'recipe <- make_basis_recipe(splits$train)\n\n'
+        'x_train <- make_design_matrix(splits$train, recipe)\n'
+        'x_validation <- make_design_matrix(splits$validation, recipe)\n'
+        'x_test <- make_design_matrix(splits$test, recipe)\n\n'
+        '# make_design_matrix() 内部的核心结构：\n'
+        'time_bs <- splines::bs(train$time_index, degree = 3,\n'
+        '  knots = recipe$time_knots,\n'
+        '  Boundary.knots = recipe$time_boundary)\n'
         'season <- cbind(\n'
         '  sin1 = sin(2*pi*train$month_of_year/12),\n'
         '  cos1 = cos(2*pi*train$month_of_year/12)\n'
         ')\n'
-        'area <- stats::model.matrix(~ neighborhood - 1, data = train)\n'
-        'x_train <- cbind(time_bs, season, area)',
-        "`bs()` 把一列 time_index 展开为多列局部三次样条；`knots` 是内部连接点，`Boundary.knots` 固定可预测范围。"
-        "`sin()`/`cos()` 把月份变成首尾相接的年度周期。`cbind()` 按列拼接矩阵。`model.matrix(~ neighborhood - 1)` "
-        "为每个社区建立 0/1 指示列，`-1` 表示不额外自动生成截距。完整项目还加入 16 个空间 RBF 列。",
+        'area <- stats::model.matrix(~ neighborhood - 1, data = train)',
+        "`source()` 读取已经测试过的模型函数。`split_panel()` 执行第 6 步的时间切分；`make_basis_recipe()` 只从训练集保存节点、"
+        "空间缩放、16 个 RBF 中心和社区 levels。三次调用 `make_design_matrix()` 使用同一 recipe，保证列完全一致。函数内部："
+        "`bs()` 生成局部三次样条；`sin()`/`cos()` 生成年度周期；每个 RBF 计算 "
+        "`exp(-distance²/(2*sigma²))`；`model.matrix(~ neighborhood - 1)` 为每个社区生成 0/1 列，`-1` 表示不自动加截距。",
         "`x_train` 的行数与 train 完全相同，列数远大于原始变量数；所有列都是数值。相同 recipe 可生成验证和测试矩阵。",
         'stopifnot(nrow(x_train) == nrow(train))\n'
         'stopifnot(is.matrix(x_train))\n'
@@ -284,6 +308,9 @@ CORE_PATH_SECTIONS = [
         "用最小二乘估计设计矩阵每一列的权重，再把预测从 log(1+y) 尺度还原到盗窃数量。",
         "OLS 是 Task 4 的直接实现，也是检验基函数本身是否有效的透明主模型。先理解它，再讨论正则化。",
         "`x_train_validation`、`y_train_validation` 和 `x_test`；最终拟合合并 2014–2022，预测 2023。",
+        'train_validation <- dplyr::bind_rows(train, validation)\n'
+        'x_train_validation <- make_design_matrix(train_validation, recipe)\n'
+        'x_test <- make_design_matrix(test, recipe)\n'
         'y_fit <- log1p(train_validation$theft_count)\n'
         'ols <- stats::lm.fit(\n'
         '  cbind(Intercept = 1, x_train_validation), y_fit\n'
@@ -292,7 +319,8 @@ CORE_PATH_SECTIONS = [
         'beta[is.na(beta)] <- 0\n'
         'pred_ols_log <- cbind(Intercept = 1, x_test) %*% beta\n'
         'pred_ols <- pmax(0, expm1(pred_ols_log))',
-        "`log1p(y)` 精确计算 log(1+y)，允许 y=0 并缓解右偏。`lm.fit(X,y)` 直接对矩阵做最小二乘；"
+        "`bind_rows()` 把训练集和验证集纵向合并；λ 已经确定后可利用 2014–2022 的全部历史信息完成最终拟合。"
+        "`make_design_matrix()` 仍使用训练期 recipe。`log1p(y)` 精确计算 log(1+y)，允许 y=0 并缓解右偏。`lm.fit(X,y)` 直接对矩阵做最小二乘；"
         "`cbind(Intercept=1, ...)` 添加截距列。`%*%` 是高等代数中的矩阵乘法 Xβ。"
         "`expm1()` 是 log1p 的反变换，`pmax(0, ...)` 把不合理的负计数截为 0。共线列可能产生 NA 系数，本项目将其置零。",
         "`pred_ols` 是长度 1,680 的非负预测；在真实 2023 测试上约得到 MAE 1.008、RMSE 2.048、R² 0.757。",
@@ -385,6 +413,30 @@ CORE_PATH_SECTIONS = [
         'stopifnot(abs(diagnostic$residual - (diagnostic$actual - diagnostic$predicted)) < 1e-10)',
         "颜色方向很容易写反：必须在图注声明“正残差=实际高于预测”。地图残差不是犯罪原因；它只提示土地用途、交通、人流或暴露量等遗漏变量可能重要。",
         "诊断图把模型评价从“报分数”提升到“理解失败模式”，是高质量分析区别于机械建模的关键。",
+        extra=[
+            code(
+                'p_prediction <- ggplot2::ggplot(\n'
+                '  monthly_fit, ggplot2::aes(month)\n'
+                ') +\n'
+                '  ggplot2::geom_line(ggplot2::aes(y = actual,\n'
+                '    color = "Actual")) +\n'
+                '  ggplot2::geom_line(ggplot2::aes(y = predicted,\n'
+                '    color = "Predicted"))\n\n'
+                'p_residual <- ggplot2::ggplot(\n'
+                '  residual_map,\n'
+                '  ggplot2::aes(lon, lat, color = mean_residual)\n'
+                ') +\n'
+                '  ggplot2::geom_point() + ggplot2::coord_equal() +\n'
+                '  ggplot2::scale_color_gradient2(midpoint = 0)',
+                "把诊断表变成预测图与残差地图",
+            ),
+            note(
+                "为什么使用这些图层",
+                "两条 `geom_line()` 共用 month 横轴，直接比较实际与预测的时间形状。"
+                "`scale_color_gradient2(midpoint=0)` 强制残差色标以 0 为中点，使低估和高估使用相反方向颜色；"
+                "正式图必须在图例中明确正负含义。",
+            ),
+        ],
     ),
     step(
         13,

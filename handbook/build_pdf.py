@@ -2,7 +2,13 @@
 
 from datetime import date
 from pathlib import Path
+import sys
 from xml.sax.saxutils import escape
+
+# Direct execution sets sys.path[0] to handbook/, while package imports need
+# the project root. Module execution already has the correct path.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
