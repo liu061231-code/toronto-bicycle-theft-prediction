@@ -8,6 +8,9 @@ testthat::test_that("handbook workflow exposes verified intermediate objects", {
     return(invisible())
   }
   source(script_path)
+  testthat::expect_true(
+    "workspace_root" %in% names(formals(run_handbook_steps))
+  )
 
   result <- run_handbook_steps(write_outputs = FALSE)
 

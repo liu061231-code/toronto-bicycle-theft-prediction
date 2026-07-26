@@ -77,3 +77,32 @@ def test_core_r_vocabulary_is_explained():
         "R²",
     ]:
         assert phrase in text
+
+
+def test_executable_handbook_path_uses_production_pipeline():
+    text = flattened_text()
+    for phrase in [
+        "resolve_bicycle_csv",
+        "make_monthly_panel(raw)",
+        "make_task1_plots(panel",
+        "fit_models(splits, basis_recipe)",
+        "model_fit$test_predictions",
+        "函数内部原理展开（不单独运行）",
+        "可直接运行",
+    ]:
+        assert phrase in text
+
+
+def test_visualization_explanation_uses_the_production_aggregation():
+    text = flattened_text()
+    assert (
+        'panel, ggplot2::aes(factor(month_of_year), theft_count)'
+        not in text
+    )
+    for phrase in [
+        "seasonal <- panel |>",
+        "group_by(year, month_of_year)",
+        "hotspots <- panel |>",
+        "heat <- panel |>",
+    ]:
+        assert phrase in text

@@ -190,7 +190,14 @@ def _section_story(section, styles, available_width):
                 formula_box(block["text"], block["explanation"], styles)
             )
         elif kind == "code":
-            story.append(code_block(block["text"], block["caption"], styles))
+            story.append(
+                code_block(
+                    block["text"],
+                    block["caption"],
+                    styles,
+                    block.get("tone", "execute"),
+                )
+            )
         elif kind == "teaching":
             story.extend(
                 teaching_note(

@@ -63,8 +63,10 @@ write_handbook_outputs <- function(result) {
   invisible(result)
 }
 
-run_handbook_steps <- function(write_outputs = TRUE) {
-  paths <- project_paths(handbook_project_root)
+run_handbook_steps <- function(
+    write_outputs = TRUE,
+    workspace_root = handbook_project_root) {
+  paths <- project_paths(workspace_root)
   ensure_packages()
   dir.create(paths$analysis_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(paths$figure_dir, recursive = TRUE, showWarnings = FALSE)

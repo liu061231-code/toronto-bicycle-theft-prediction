@@ -118,19 +118,26 @@ def formula_box(text, explanation, styles):
     return KeepTogether([box, Spacer(1, 5)])
 
 
-def code_block(code, caption, styles):
+def code_block(code, caption, styles, tone="execute"):
     safe = escape(code).replace(" ", "&nbsp;").replace("\n", "<br/>")
     content = [
         Paragraph(escape(caption), styles["badge"]),
         Spacer(1, 3),
         Paragraph(safe, styles["code"]),
     ]
+    palette = {
+        "execute": ("#F5F7FA", "#0B6E75"),
+        "check": ("#F5F7FA", "#52667A"),
+        "principle": ("#FFF8ED", "#B45309"),
+    }
+    background, accent = palette.get(tone, palette["execute"])
     box = Table([[content]], colWidths=[480])
     box.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F5F7FA")),
-                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#BCCCDC")),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor(accent)),
+                ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(accent)),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 8),
                 ("TOPPADDING", (0, 0), (-1, -1), 5),
