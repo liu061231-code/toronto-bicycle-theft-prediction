@@ -1,7 +1,9 @@
 """Build the STAT3888 five-minute speech and principles guide."""
 
 from pathlib import Path
+import re
 import sys
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
@@ -61,8 +63,8 @@ def set_font(
     bold=None,
     italic=None,
     color=INK,
-    ascii_font="Calibri",
-    east_asia="Arial Unicode MS",
+    ascii_font="Arial",
+    east_asia="Hiragino Sans GB",
 ):
     text = run.text or ""
     font_name = east_asia if any("\u3400" <= char <= "\u9fff" for char in text) else ascii_font
@@ -131,10 +133,10 @@ def configure_document(document):
     section.footer_distance = Inches(0.36)
 
     normal = document.styles["Normal"]
-    normal.font.name = "Arial Unicode MS"
-    normal._element.rPr.rFonts.set(qn("w:ascii"), "Arial Unicode MS")
-    normal._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial Unicode MS")
-    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Arial Unicode MS")
+    normal.font.name = "Arial"
+    normal._element.rPr.rFonts.set(qn("w:ascii"), "Arial")
+    normal._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial")
+    normal._element.rPr.rFonts.set(qn("w:eastAsia"), "Hiragino Sans GB")
     normal.font.size = Pt(10.5)
     normal.font.color.rgb = INK
     normal.paragraph_format.space_before = Pt(0)
@@ -148,10 +150,10 @@ def configure_document(document):
         ("Heading 3", 11.5, DARK_BLUE, 8, 4),
     ]:
         style = document.styles[style_name]
-        style.font.name = "Arial Unicode MS"
-        style._element.rPr.rFonts.set(qn("w:ascii"), "Arial Unicode MS")
-        style._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial Unicode MS")
-        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Arial Unicode MS")
+        style.font.name = "Arial"
+        style._element.rPr.rFonts.set(qn("w:ascii"), "Arial")
+        style._element.rPr.rFonts.set(qn("w:hAnsi"), "Arial")
+        style._element.rPr.rFonts.set(qn("w:eastAsia"), "Hiragino Sans GB")
         style.font.size = Pt(size)
         style.font.bold = True
         style.font.color.rgb = color
@@ -171,6 +173,44 @@ def configure_document(document):
     run = footer_paragraph.add_run("五分钟演讲稿与原理解析  ·  ")
     set_font(run, size=8.5, color=MUTED)
     add_page_number(footer_paragraph)
+
+
+def normalise_office_theme_fonts(docx_path):
+    """Replace Microsoft-only theme defaults with fonts installed on this Mac."""
+    temporary_path = docx_path.with_suffix(".font-fix.docx")
+    with ZipFile(docx_path, "r") as source, ZipFile(
+        temporary_path, "w", compression=ZIP_DEFLATED
+    ) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "word/theme/theme1.xml":
+                data = re.sub(
+                    rb'typeface="[^"]*"',
+                    b'typeface="Arial"',
+                    data,
+                )
+            elif item.filename in {"word/settings.xml", "word/fontTable.xml"}:
+                data = data.replace(
+                    b'w:eastAsia="ja-JP"',
+                    b'w:eastAsia="zh-CN"',
+                ).replace(
+                    b"Cambria Math",
+                    b"Times New Roman",
+                ).replace(
+                    b"Calibri",
+                    b"Arial",
+                ).replace(
+                    b"Cambria",
+                    b"Times New Roman",
+                ).replace(
+                    "ＭＳ 明朝".encode("utf-8"),
+                    b"Arial",
+                ).replace(
+                    "ＭＳ ゴシック".encode("utf-8"),
+                    b"Arial",
+                )
+            target.writestr(item, data)
+    temporary_path.replace(docx_path)
 
 
 def add_para(
@@ -364,7 +404,7 @@ def add_quick_map(document):
     add_callout(
         document,
         "计时建议",
-        "全文约945个汉字。以每分钟约190个汉字的清晰学术语速，加上指图和视频停顿，约为5分钟。",
+        "英文正式稿共659词。以每分钟约132词的清晰学术语速，加上指图和约5秒视频停顿，约为5分钟。",
         fill=LIGHT_GRAY,
         accent=DARK_BLUE,
     )
@@ -383,7 +423,7 @@ def add_quick_map(document):
 
 
 def add_speech_part(document):
-    document.add_heading("Part I · 五分钟逐页演讲稿", level=1)
+    document.add_heading("Part I · 五分钟逐页演讲稿（English）", level=1)
     add_para(
         document,
         "下列内容按最终四页PPT排列。方括号中的动作不需要说出口。",
@@ -392,14 +432,14 @@ def add_speech_part(document):
         after=9,
     )
     for index, section in enumerate(SPEECH_SECTIONS):
-        if index:
-            document.add_page_break()
         start = f"{section['start_seconds']//60}:{section['start_seconds']%60:02d}"
         end = f"{section['end_seconds']//60}:{section['end_seconds']%60:02d}"
-        document.add_heading(
+        heading = document.add_heading(
             f"第{section['slide']}页 · {section['title']}  |  {start}–{end}",
             level=2,
         )
+        if index:
+            heading.paragraph_format.page_break_before = True
         add_slide_image(document, section["slide"])
         add_callout(
             document,
@@ -427,8 +467,8 @@ def add_speech_part(document):
 
 
 def add_principles_part(document):
-    document.add_page_break()
-    document.add_heading("Part II · 方法原理解析", level=1)
+    heading = document.add_heading("Part II · 方法原理解析", level=1)
+    heading.paragraph_format.page_break_before = True
     add_para(
         document,
         "每个概念都按“直觉 → 数学表达 → 本项目如何实现 → 为什么适合”展开。"
@@ -436,9 +476,9 @@ def add_principles_part(document):
         after=10,
     )
     for index, item in enumerate(PRINCIPLE_SECTIONS):
-        if index in {3, 6, 8}:
-            document.add_page_break()
-        document.add_heading(item["title"], level=2)
+        heading = document.add_heading(item["title"], level=2)
+        if index in {3, 6}:
+            heading.paragraph_format.page_break_before = True
         add_labelled_para(document, "直觉：", item["intuition"])
         add_callout(
             document,
@@ -472,11 +512,25 @@ def add_principles_part(document):
         fill=LIGHT_TEAL,
         accent=TEAL,
     )
+    document.add_heading("一分钟原理复述", level=2)
+    recap = [
+        "先把单条事件汇总为社区—月份计数，使时间和空间进入同一观察单位。",
+        "用趋势图、热点图、热力图和动画分别回答什么时候高、哪里高、哪里在什么时候变高。",
+        "用log(1+y)压缩极端计数，再在预测后返回原始计数尺度评价。",
+        "用B-spline、sine/cosine和RBF把长期、季节和空间结构变成设计矩阵的列。",
+        "Basis OLS完成Task 4；Basis Ridge在同一线性模型上加入L2惩罚以提高稳定性。",
+        "按时间划分训练、验证和测试，并与简单基线比较，才能说明模型对未来数据是否真正有用。",
+    ]
+    for text in recap:
+        paragraph = document.add_paragraph(style="List Bullet")
+        paragraph.paragraph_format.space_after = Pt(3)
+        run = paragraph.add_run(text)
+        set_font(run, size=10.2)
 
 
 def add_viva_part(document):
-    document.add_page_break()
-    document.add_heading("Part III · 答辩速查", level=1)
+    heading = document.add_heading("Part III · 答辩速查", level=1)
+    heading.paragraph_format.page_break_before = True
     add_para(
         document,
         "先回答“20秒版本”。只有老师继续追问时，再使用“进一步解释”。",
@@ -485,9 +539,9 @@ def add_viva_part(document):
         after=9,
     )
     for index, item in enumerate(VIVA_QA):
-        if index in {3, 6, 8}:
-            document.add_page_break()
-        document.add_heading(item["question"], level=2)
+        heading = document.add_heading(item["question"], level=2)
+        if index in {4, 7}:
+            heading.paragraph_format.page_break_before = True
         add_callout(
             document,
             "20秒回答",
@@ -530,6 +584,7 @@ def build_document(output_path=OUTPUT):
     document.core_properties.author = "Name: ____________________"
     document.core_properties.keywords = "STAT3888, spatiotemporal, basis functions, OLS, Ridge"
     document.save(output_path)
+    normalise_office_theme_fonts(output_path)
     return output_path
 
 
