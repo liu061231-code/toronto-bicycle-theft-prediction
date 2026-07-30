@@ -1,6 +1,10 @@
 from pathlib import Path
+import re
 import unittest
 
+from docx import Document
+
+from build_five_minute_speech_guide import build_document
 from five_minute_speech_content import (
     PRINCIPLE_SECTIONS,
     PROJECT_FACTS,
@@ -32,10 +36,18 @@ class SpeechContentTests(unittest.TestCase):
         speech = " ".join(item["script"] for item in SPEECH_SECTIONS)
         self.assertIn("Basis OLS", speech)
         self.assertIn("Basis Ridge", speech)
-        self.assertNotIn("准确率", speech)
-        self.assertIn("因果", speech)
+        self.assertNotIn("prediction accuracy", speech.lower())
+        self.assertIn("causal", speech.lower())
         self.assertIn("Task 1", speech)
         self.assertIn("Task 4", speech)
+
+    def test_formal_speech_is_five_minute_english(self):
+        speech = " ".join(item["script"] for item in SPEECH_SECTIONS)
+        words = re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*|R²", speech)
+        chinese_characters = re.findall(r"[\u3400-\u9fff]", speech)
+        self.assertGreaterEqual(len(words), 600)
+        self.assertLessEqual(len(words), 750)
+        self.assertEqual(chinese_characters, [])
 
     def test_principles_follow_the_teaching_structure(self):
         self.assertGreaterEqual(len(PRINCIPLE_SECTIONS), 10)
@@ -55,6 +67,19 @@ class SpeechContentTests(unittest.TestCase):
         text = metrics_path.read_text(encoding="utf-8")
         self.assertIn("Basis OLS", text)
         self.assertIn("Basis Ridge", text)
+
+    def test_docx_contains_required_sections(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_dir:
+            output = build_document(Path(temp_dir) / "guide.docx")
+            document = Document(output)
+            text = "\n".join(p.text for p in document.paragraphs)
+            self.assertIn("五分钟逐页演讲稿", text)
+            self.assertIn("方法原理解析", text)
+            self.assertIn("答辩速查", text)
+            self.assertIn("姓名：", text)
+            self.assertIn("学号：", text)
 
 
 if __name__ == "__main__":

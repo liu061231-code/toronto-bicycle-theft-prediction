@@ -30,14 +30,18 @@ SPEECH_SECTIONS = [
         "end_seconds": 70,
         "title": "研究问题与时间证据",
         "script": (
-            "大家好，我的项目研究多伦多2014到2023年的自行车盗窃报告。原始数据共有"
-            "31,833条事件，覆盖140个社区。我把事件整理成“社区乘月份”的面板数据："
-            "每一行表示某个社区在某个月的报告盗窃次数。这样既能追踪时间变化，也能"
-            "比较空间差异。请看左图，全市月度总量反复出现尖峰，而且尖峰大多落在温暖"
-            "季节；不同年份的峰值高度又不完全相同，说明数据同时包含季节循环和长期变化。"
-            "右图把相同月份汇总后也显示，典型盗窃水平从冬季向夏季上升，再在年末回落。"
-            "因此第一页的核心结论是：Toronto bicycle theft is seasonal, but the size of "
-            "the seasonal peak changes over time。"
+            "Good morning. My project studies reported bicycle thefts in Toronto from 2014 "
+            "to 2023. The raw data contain 31,833 incidents across 140 neighbourhoods. I "
+            "aggregated these events into a neighbourhood-by-month panel, where each row "
+            "records the number of reported thefts in one neighbourhood during one month. "
+            "This structure lets us study temporal change and spatial variation together. "
+            "On the left, the citywide monthly series shows repeated sharp peaks, mostly "
+            "during the warmer part of each year. However, the peak height is not constant "
+            "across years, so the data contain both a seasonal cycle and longer-run change. "
+            "The monthly distribution on the right confirms that the typical count rises "
+            "from winter into summer and then falls toward the end of the year. The main "
+            "message from this slide is that Toronto bicycle theft is seasonal, but the "
+            "strength of the seasonal peak changes over time."
         ),
         "pointing_cues": (
             "先指左侧时间序列中的多个夏季尖峰；说到季节循环时转向右侧月份分布；"
@@ -53,13 +57,18 @@ SPEECH_SECTIONS = [
         "end_seconds": 135,
         "title": "空间热点与时空共同变化",
         "script": (
-            "第二页加入空间维度，这部分对应必做的Task 1。中间的时空热力图中，每一行"
-            "是一个高盗窃社区，每一列是一个月份，颜色越亮表示当月报告次数越高。许多行"
-            "会在相近月份同时变亮，说明季节高峰不是单个社区的偶然波动；但最亮的区域又"
-            "长期集中在少数社区。右上地图把各社区的长期平均水平放回地理位置，可以看到"
-            "主要热点集中在downtown。右下的视频继续展示2014到2023年的月度变化："
-            "热点强度会增强或减弱，但空间集中位置总体稳定。所以Task 1得到的结论是，"
-            "时间上的夏季高峰和空间上的downtown集中是同时存在的。"
+            "Slide two adds the spatial dimension and completes the required Task 1. In the "
+            "space-time heatmap, each row is one high-count neighbourhood, each column is one "
+            "month, and brighter colours indicate more reported thefts. Many rows brighten "
+            "during similar months, showing that the seasonal peak is not an isolated event "
+            "in only one area. At the same time, the brightest cells remain concentrated in "
+            "a relatively small group of neighbourhoods. The map at the upper right returns "
+            "these long-run averages to their geographic locations and shows that the main "
+            "hotspots are concentrated around downtown Toronto. The short animation below "
+            "shows how the pattern changes month by month from 2014 to 2023. Hotspot intensity "
+            "rises and falls, but the broad spatial ordering remains persistent. Therefore, "
+            "Task 1 provides two connected findings: a warm-season temporal peak and a stable "
+            "downtown spatial concentration."
         ),
         "pointing_cues": (
             "沿热力图横向指时间、纵向指社区；随后指右上地图的downtown高值区；"
@@ -75,19 +84,30 @@ SPEECH_SECTIONS = [
         "end_seconds": 245,
         "title": "Task 4：基函数线性回归",
         "script": (
-            "接下来是Task 4，也就是使用基函数建立线性回归。响应变量是每个社区每月的"
-            "盗窃次数。因为少数月份的计数特别高，我先使用log one plus y变换，降低极端"
-            "高峰对平方误差的支配。这个模型仍然是线性回归，但设计矩阵不只包含原始时间"
-            "和经纬度。第一，三次B-spline把长期变化表示成几个局部平滑形状；第二，"
-            "sine和cosine基函数用周期波形表示一年和半年的季节循环；第三，16个RBF"
-            "把社区到空间中心的距离转化为邻近程度；模型还保留社区效应。换句话说，"
-            "基函数先把复杂的非线性模式转换成一组特征，然后回归模型对这些特征做线性"
-            "组合。为了避免未来信息泄漏，数据按时间顺序切分：2014到2021训练，2022"
-            "选择Ridge惩罚强度，2023只用于最后测试。Basis OLS是Task 4要求的标准"
-            "基函数线性回归；Basis Ridge在同一设计矩阵上加入系数平方惩罚，目的不是"
-            "换成另一个黑箱模型，而是在基函数可能相关时让系数更稳定。右图显示，"
-            "OLS的测试RMSE是2.05、R平方是0.757；Ridge分别是2.06和0.754。两者几乎"
-            "相同，而验证集选择的lambda只有0.0001，说明这份数据只需要很弱的正则化。"
+            "I then address Task 4 by building a linear regression model with basis "
+            "functions. The response is the monthly theft count for each neighbourhood. "
+            "Because a small number of neighbourhood-months have very high counts, I model "
+            "log one plus the count. This reduces the influence of extreme peaks while "
+            "preserving zero observations. The model is still linear in its coefficients, "
+            "but the design matrix contains transformed features rather than only raw time "
+            "and coordinates. First, cubic B-splines represent smooth long-run change using "
+            "several local curves. Second, sine and cosine terms represent annual and "
+            "half-year seasonal cycles. Third, sixteen radial basis functions, or RBFs, "
+            "convert distance from selected spatial centres into smooth measures of "
+            "proximity. I also retain neighbourhood indicators to capture persistent area "
+            "differences. In other words, the basis functions convert nonlinear time, "
+            "seasonal, and spatial patterns into columns of a design matrix, and the "
+            "regression forms a linear combination of those columns. "
+            "The split is strictly chronological to avoid future information leakage: "
+            "2014 to 2021 are used for training, 2022 is used to choose the Ridge penalty, "
+            "and 2023 is held out for final testing. Basis OLS is the standard basis-function "
+            "linear regression required by Task 4. Basis Ridge uses the same design matrix "
+            "but adds a squared-coefficient penalty, which stabilises coefficients when basis "
+            "columns are correlated; it is not a separate black-box model. On the 2023 test "
+            "set, Basis OLS has an RMSE of 2.05 and an R-squared of 0.757. Basis Ridge has an "
+            "RMSE of 2.06 and an R-squared of 0.754. Their predictive performance is almost "
+            "identical. The selected lambda is only 0.0001, so the validation procedure "
+            "indicates that only very weak regularisation is needed."
         ),
         "pointing_cues": (
             "依次指左侧B-spline、周期波形和空间基函数；说到测试结果时指右侧OLS与"
@@ -103,13 +123,17 @@ SPEECH_SECTIONS = [
         "end_seconds": 300,
         "title": "预测、残差与结论",
         "script": (
-            "最后一页检查模型到底学到了什么。左图比较实际值和Ridge预测值：模型能够"
-            "重现年度起伏，并且明显优于只使用全市均值或社区均值的基线；但是最高的夏季"
-            "峰值仍被低估。右侧残差图也说明，大部分社区误差较小，但极端月份和少数热点"
-            "仍是主要困难。综合来看，本项目完成了Task 1和Task 4：可视化发现温暖季节"
-            "高峰与downtown空间集中，基函数回归把长期、季节和空间信号放入一个统一、"
-            "可解释的预测框架。最后需要强调，我们分析的是reported theft counts之间的"
-            "相关模式，并没有证明季节或地理位置对盗窃存在因果作用。谢谢。"
+            "The final slide checks what the model actually learned. The observed and Ridge "
+            "prediction curves share the main annual cycle, and both basis models clearly "
+            "outperform the citywide-mean and neighbourhood-mean baselines. However, the "
+            "largest summer peaks are still underestimated. The residual map also shows that "
+            "most neighbourhood errors are modest, while extreme months and a small number "
+            "of hotspots remain the main difficulty. Overall, the project completes Task 1 "
+            "and Task 4: the visualisations identify warm-season peaks and persistent downtown "
+            "concentration, while basis-function regression combines long-run, seasonal, and "
+            "spatial signals in one interpretable predictive framework. Finally, these are "
+            "associations in reported theft counts. They do not establish a causal effect of "
+            "season or location on bicycle theft. Thank you."
         ),
         "pointing_cues": (
             "先指实际与预测曲线的共同周期，再指被压低的最高峰；最后指残差图和底部结论。"
