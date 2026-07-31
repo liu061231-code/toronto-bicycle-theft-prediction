@@ -1,6 +1,7 @@
 parameter,value
-selected_lambda,1.0000000000000009e-4
-validation_rmse,2.880049678223497
+selected_lambda,0.013219411484660307
+mean_cv_rmse,3.209679006334442
+cv_folds,5
 time_basis_knots,4
 spatial_rbf_centers,16
 rbf_sigma,0.8

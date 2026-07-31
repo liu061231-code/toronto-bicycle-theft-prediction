@@ -6,6 +6,28 @@ split_panel <- function(panel) {
   )
 }
 
+make_rolling_folds <- function(
+    panel,
+    initial_train_end = 2017L,
+    final_validation_year = 2022L) {
+  validation_years <- seq.int(
+    initial_train_end + 1L,
+    final_validation_year
+  )
+  stats::setNames(
+    lapply(validation_years, function(validation_year) {
+      list(
+        fold = validation_year - initial_train_end,
+        train_end = validation_year - 1L,
+        validation_year = validation_year,
+        train = dplyr::filter(panel, year <= validation_year - 1L),
+        validation = dplyr::filter(panel, year == validation_year)
+      )
+    }),
+    paste0("validate_", validation_years)
+  )
+}
+
 make_basis_recipe <- function(train) {
   unique_coordinates <- train |>
     dplyr::distinct(neighborhood, lon, lat) |>
@@ -76,6 +98,60 @@ make_design_matrix <- function(data, recipe) {
   x
 }
 
+default_lambda_grid <- function() {
+  exp(seq(log(100), log(1e-4), length.out = 100))
+}
+
+cross_validate_ridge <- function(
+    panel,
+    lambda_grid = default_lambda_grid()) {
+  folds <- make_rolling_folds(panel)
+  fold_results <- purrr::map_dfr(folds, function(fold_data) {
+    recipe <- make_basis_recipe(fold_data$train)
+    x_train <- make_design_matrix(fold_data$train, recipe)
+    x_validation <- make_design_matrix(fold_data$validation, recipe)
+    y_train <- log1p(fold_data$train$theft_count)
+    ridge <- glmnet::glmnet(
+      x_train,
+      y_train,
+      alpha = 0,
+      lambda = lambda_grid,
+      standardize = TRUE
+    )
+    validation_log <- predict(
+      ridge,
+      newx = x_validation,
+      s = lambda_grid
+    )
+    rmse <- apply(validation_log, 2, function(prediction) {
+      prediction <- pmax(0, expm1(prediction))
+      sqrt(mean((fold_data$validation$theft_count - prediction)^2))
+    })
+    tibble::tibble(
+      fold = fold_data$fold,
+      train_end = fold_data$train_end,
+      validation_year = fold_data$validation_year,
+      lambda = lambda_grid,
+      RMSE = rmse
+    )
+  })
+  summary <- fold_results |>
+    dplyr::group_by(lambda) |>
+    dplyr::summarise(
+      mean_rmse = mean(RMSE),
+      sd_rmse = stats::sd(RMSE),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(dplyr::desc(lambda))
+  selected_lambda <- summary$lambda[which.min(summary$mean_rmse)]
+  list(
+    folds = folds,
+    fold_results = fold_results,
+    summary = summary,
+    selected_lambda = selected_lambda
+  )
+}
+
 metric_frame <- function(actual, predicted, model, split = "Test 2023") {
   tibble::tibble(
     model = model,
@@ -98,23 +174,28 @@ predict_ols <- function(coefficients, x) {
   as.numeric(cbind(Intercept = 1, x) %*% coefficients)
 }
 
-fit_models <- function(splits, recipe) {
+fit_models <- function(
+    splits,
+    recipe = NULL,
+    lambda_grid = default_lambda_grid()) {
   train <- splits$train
   validation <- splits$validation
   test <- splits$test
-  train_validation <- dplyr::bind_rows(train, validation)
+  tuning_panel <- dplyr::bind_rows(train, validation)
 
-  x_train <- make_design_matrix(train, recipe)
-  x_validation <- make_design_matrix(validation, recipe)
-  x_train_validation <- make_design_matrix(train_validation, recipe)
-  x_test <- make_design_matrix(test, recipe)
-
-  y_train <- log1p(train$theft_count)
-  y_train_validation <- log1p(train_validation$theft_count)
+  cv <- cross_validate_ridge(tuning_panel, lambda_grid)
+  selected_lambda <- cv$selected_lambda
+  final_recipe <- make_basis_recipe(tuning_panel)
+  x_final <- make_design_matrix(tuning_panel, final_recipe)
+  x_test <- make_design_matrix(test, final_recipe)
+  y_final <- log1p(tuning_panel$theft_count)
   actual_test <- test$theft_count
 
-  global_prediction <- rep(mean(train$theft_count), nrow(test))
-  neighborhood_means <- train |>
+  global_prediction <- rep(
+    mean(tuning_panel$theft_count),
+    nrow(test)
+  )
+  neighborhood_means <- tuning_panel |>
     dplyr::group_by(neighborhood) |>
     dplyr::summarise(value = mean(theft_count), .groups = "drop")
   neighborhood_prediction <- test |>
@@ -122,31 +203,14 @@ fit_models <- function(splits, recipe) {
     dplyr::left_join(neighborhood_means, by = "neighborhood") |>
     dplyr::pull(value)
 
-  ols_coefficients <- fit_ols(x_train_validation, y_train_validation)
+  ols_coefficients <- fit_ols(x_final, y_final)
   ols_prediction <- pmax(
     0,
     expm1(predict_ols(ols_coefficients, x_test))
   )
 
-  lambda_grid <- exp(seq(log(100), log(1e-4), length.out = 100))
-  ridge_train <- glmnet::glmnet(
-    x_train, y_train,
-    alpha = 0, lambda = lambda_grid, standardize = TRUE
-  )
-  validation_log <- predict(
-    ridge_train, newx = x_validation, s = lambda_grid
-  )
-  validation_rmse <- apply(
-    validation_log,
-    2,
-    function(prediction) {
-      prediction <- pmax(0, expm1(prediction))
-      sqrt(mean((validation$theft_count - prediction)^2))
-    }
-  )
-  selected_lambda <- lambda_grid[which.min(validation_rmse)]
   ridge_final <- glmnet::glmnet(
-    x_train_validation, y_train_validation,
+    x_final, y_final,
     alpha = 0, lambda = selected_lambda, standardize = TRUE
   )
   ridge_prediction <- pmax(
@@ -165,6 +229,7 @@ fit_models <- function(splits, recipe) {
   predictions <- test |>
     dplyr::transmute(
       month = as.Date(month),
+      year,
       neighborhood,
       lon,
       lat,
@@ -179,10 +244,47 @@ fit_models <- function(splits, recipe) {
     metrics = metrics,
     test_predictions = predictions,
     selected_lambda = selected_lambda,
-    validation_rmse = min(validation_rmse),
-    recipe = recipe,
+    validation_rmse = min(cv$summary$mean_rmse),
+    cv_results = cv$fold_results,
+    cv_summary = cv$summary,
+    cv_folds = cv$folds,
+    recipe = final_recipe,
+    final_training_years = sort(unique(tuning_panel$year)),
     ridge_model = ridge_final,
     ols_coefficients = ols_coefficients
+  )
+}
+
+save_stacked_plots <- function(
+    top,
+    bottom,
+    path,
+    width = 9,
+    height = 5.4,
+    dpi = 180) {
+  grDevices::png(
+    path,
+    width = width,
+    height = height,
+    units = "in",
+    res = dpi,
+    bg = "white"
+  )
+  on.exit(grDevices::dev.off(), add = TRUE)
+  grid::grid.newpage()
+  layout <- grid::grid.layout(
+    nrow = 2,
+    ncol = 1,
+    heights = grid::unit(c(0.46, 0.54), "null")
+  )
+  grid::pushViewport(grid::viewport(layout = layout))
+  print(
+    top,
+    vp = grid::viewport(layout.pos.row = 1, layout.pos.col = 1)
+  )
+  print(
+    bottom,
+    vp = grid::viewport(layout.pos.row = 2, layout.pos.col = 1)
   )
 }
 
@@ -229,6 +331,37 @@ make_model_plots <- function(fit, panel, recipe, figure_dir) {
       title = "Out-of-time test performance",
       subtitle = "All scores use 2023 only; lower MAE and RMSE are better",
       x = "Error in monthly neighborhood theft counts", y = NULL
+    ) +
+    handbook_theme()
+
+  p_cv <- ggplot2::ggplot(
+    fit$cv_summary,
+    ggplot2::aes(lambda, mean_rmse)
+  ) +
+    ggplot2::geom_ribbon(
+      ggplot2::aes(
+        ymin = mean_rmse - sd_rmse,
+        ymax = mean_rmse + sd_rmse
+      ),
+      fill = "#BFE3E3",
+      alpha = 0.55
+    ) +
+    ggplot2::geom_line(color = "#007F82", linewidth = 1) +
+    ggplot2::geom_vline(
+      xintercept = fit$selected_lambda,
+      color = "#D95F02",
+      linetype = "dashed"
+    ) +
+    ggplot2::scale_x_log10() +
+    ggplot2::labs(
+      title = "Rolling-origin Ridge tuning",
+      subtitle = paste0(
+        "Five expanding validation years; selected λ = ",
+        format(signif(fit$selected_lambda, 3), scientific = FALSE),
+        "; ribbon = ±1 SD"
+      ),
+      x = "Lambda (log scale)",
+      y = "Mean validation RMSE"
     ) +
     handbook_theme()
 
@@ -292,18 +425,23 @@ make_model_plots <- function(fit, panel, recipe, figure_dir) {
       "05_basis_functions.png",
       "06_model_comparison.png",
       "07_observed_vs_predicted.png",
-      "08_residual_map.png"
+      "08_residual_map.png",
+      "09_rolling_cross_validation.png"
     )
   )
   purrr::walk2(
-    list(p5, p6, p7, p8),
-    paths,
+    list(p5, p7, p8, p_cv),
+    paths[c(1, 3, 4, 5)],
     ~ggplot2::ggsave(
       .y, .x, width = 9, height = 5.4, dpi = 180, bg = "white"
     )
   )
+  save_stacked_plots(p_cv, p6, paths[2])
   stats::setNames(
     normalizePath(paths),
-    c("basis", "comparison", "prediction", "residual")
+    c(
+      "basis", "comparison", "prediction", "residual",
+      "cross_validation"
+    )
   )
 }
