@@ -21,24 +21,28 @@ from five_minute_speech_content import (
 
 
 WORKTREE_ROOT = Path(__file__).resolve().parents[2]
-MAIN_ROOT = Path("/Users/liumingyuan/Documents/project of stat38888")
 DELIVERABLE_DIR = (
     WORKTREE_ROOT
     / "deliverables"
     / "STAT3888_Toronto_Bicycle_Theft_Presentation"
 )
-OUTPUT = DELIVERABLE_DIR / "STAT3888_五分钟演讲稿与原理解析.docx"
+OUTPUT = DELIVERABLE_DIR / "STAT3888_五分钟演讲稿与原理解析_滚动交叉验证版.docx"
 SLIDE_DIR = (
-    MAIN_ROOT
+    WORKTREE_ROOT
     / "deliverables"
     / "STAT3888_Toronto_Bicycle_Theft_Presentation"
-    / "STAT3888_Toronto_Bicycle_Theft_Embedded_Video"
+    / "STAT3888_Toronto_Bicycle_Theft_Cross_Validated_Embedded_Video"
 )
 
-SKILL_DIR = Path(
-    "/Users/liumingyuan/.codex/plugins/cache/openai-primary-runtime/"
-    "documents/26.727.11326/skills/documents"
+DOCUMENT_RUNTIME_ROOT = Path(
+    "/Users/liumingyuan/.codex/plugins/cache/openai-primary-runtime/documents"
 )
+DOCUMENT_RUNTIME_CANDIDATES = sorted(
+    DOCUMENT_RUNTIME_ROOT.glob("*/skills/documents")
+)
+if not DOCUMENT_RUNTIME_CANDIDATES:
+    raise RuntimeError("No bundled documents runtime is available.")
+SKILL_DIR = DOCUMENT_RUNTIME_CANDIDATES[-1]
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 from table_geometry import apply_table_geometry  # noqa: E402
 
@@ -404,7 +408,7 @@ def add_quick_map(document):
     add_callout(
         document,
         "计时建议",
-        "英文正式稿共659词。以每分钟约132词的清晰学术语速，加上指图和约5秒视频停顿，约为5分钟。",
+        "英文正式稿共697词。以每分钟约140词的清晰学术语速，并把视频展示控制在约5秒，可在约5分钟内完成。",
         fill=LIGHT_GRAY,
         accent=DARK_BLUE,
     )
@@ -412,7 +416,7 @@ def add_quick_map(document):
     for text in [
         "Task 1负责发现和展示模式；Task 4负责建立预测模型。",
         "Basis OLS满足任务要求；Basis Ridge是在同一线性模型上的L2正则化扩展。",
-        "OLS测试RMSE最低；Ridge强调系数稳定性，不能说Ridge在所有指标上最好。",
+        "OLS测试RMSE最低；Ridge的MAE更低且强调系数稳定性，不能说Ridge在所有指标上最好。",
         "reported theft counts是报告数量，不等于真实风险，也不证明因果关系。",
     ]:
         paragraph = document.add_paragraph(style="List Bullet")
@@ -452,8 +456,8 @@ def add_speech_part(document):
         add_para(
             document,
             section["script"],
-            size=11.2,
-            line=1.32,
+            size=10.5 if section["slide"] == 3 else 11.2,
+            line=1.20 if section["slide"] == 3 else 1.32,
             after=8,
         )
         add_callout(
@@ -491,12 +495,13 @@ def add_principles_part(document):
         add_labelled_para(document, "本项目如何实现：", item["project_use"])
         add_labelled_para(document, "为什么适合：", item["why_suitable"], after=8)
 
-    document.add_heading("模型结果应如何准确表述", level=2)
+    metric_heading = document.add_heading("模型结果应如何准确表述", level=2)
+    metric_heading.paragraph_format.page_break_before = True
     metric_rows = [
-        ("Global mean", "2.187", "4.167", "-0.007", "比测试集均值还差"),
-        ("Neighbourhood mean", "1.411", "2.726", "0.569", "有空间差异但无时间变化"),
-        ("Basis OLS", "1.008", "2.048", "0.757", "最低RMSE、最高R²"),
-        ("Basis Ridge", "1.006", "2.060", "0.754", "最低MAE、系数更稳定"),
+        ("Global mean", "2.170", "4.164", "-0.006", "比测试集均值还差"),
+        ("Neighbourhood mean", "1.391", "2.699", "0.577", "有空间差异但无时间变化"),
+        ("Basis OLS", "1.120", "1.966", "0.776", "最低RMSE、最高R²"),
+        ("Basis Ridge", "1.054", "1.976", "0.774", "最低MAE、系数更稳定"),
     ]
     add_table(
         document,
@@ -507,8 +512,8 @@ def add_principles_part(document):
     add_callout(
         document,
         "推荐说法",
-        "Basis OLS在2023测试集取得最低RMSE 2.05和最高R² 0.757；Basis Ridge结果几乎相同，"
-        "并在相关基函数下提供稳定化，因此作为主要预测与残差展示模型。",
+        "Basis OLS在2023测试集取得最低RMSE 1.97和最高R² 0.776；Basis Ridge的RMSE为1.98、"
+        "MAE更低，并通过滚动交叉验证选择λ，因此作为主要预测与残差展示模型。",
         fill=LIGHT_TEAL,
         accent=TEAL,
     )
@@ -519,7 +524,7 @@ def add_principles_part(document):
         "用log(1+y)压缩极端计数，再在预测后返回原始计数尺度评价。",
         "用B-spline、sine/cosine和RBF把长期、季节和空间结构变成设计矩阵的列。",
         "Basis OLS完成Task 4；Basis Ridge在同一线性模型上加入L2惩罚以提高稳定性。",
-        "按时间划分训练、验证和测试，并与简单基线比较，才能说明模型对未来数据是否真正有用。",
+        "用5个滚动时间折选择Ridge的λ，再用完全未参与调参的2023测试，并与简单基线比较。",
     ]
     for text in recap:
         paragraph = document.add_paragraph(style="List Bullet")
@@ -557,7 +562,7 @@ def add_viva_part(document):
         "能在不看稿的情况下说出研究问题和两条核心发现。",
         "能解释热力图的行、列和颜色分别代表什么。",
         "能用“设计矩阵的列”解释基函数，而不是只背术语。",
-        "能说出训练、验证、测试年份及其目的。",
+        "能说出5个滚动验证年、最终训练期和2023测试集各自的目的。",
         "能准确区分OLS与Ridge的结果和选择理由。",
         "不会把R²说成预测准确率，也不会把空间热点说成因果。",
     ]

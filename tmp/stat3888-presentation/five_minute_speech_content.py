@@ -7,17 +7,20 @@ PROJECT_FACTS = {
     "neighbourhoods": 140,
     "panel_rows": 16800,
     "required_tasks": ["Task 1", "Task 4"],
-    "train_period": "2014–2021",
-    "validation_period": "2022",
+    "train_period": "2014–2022 after tuning",
+    "validation_period": "five rolling folds: 2018–2022",
     "test_period": "2023",
-    "basis_ols_mae": 1.008,
-    "basis_ols_rmse": 2.05,
-    "basis_ols_r2": 0.757,
-    "basis_ridge_mae": 1.006,
-    "basis_ridge_rmse": 2.06,
-    "basis_ridge_r2": 0.754,
-    "neighbourhood_mean_rmse": 2.73,
-    "selected_lambda": 0.0001,
+    "cv_validation_years": [2018, 2019, 2020, 2021, 2022],
+    "cv_folds": 5,
+    "basis_ols_mae": 1.120,
+    "basis_ols_rmse": 1.97,
+    "basis_ols_r2": 0.776,
+    "basis_ridge_mae": 1.054,
+    "basis_ridge_rmse": 1.98,
+    "basis_ridge_r2": 0.774,
+    "neighbourhood_mean_rmse": 2.70,
+    "ridge_rmse_improvement_percent": 26.8,
+    "selected_lambda": 0.013219411484660307,
     "time_knots": 4,
     "spatial_rbf_centers": 16,
 }
@@ -98,20 +101,22 @@ SPEECH_SECTIONS = [
             "differences. In other words, the basis functions convert nonlinear time, "
             "seasonal, and spatial patterns into columns of a design matrix, and the "
             "regression forms a linear combination of those columns. "
-            "The split is strictly chronological to avoid future information leakage: "
-            "2014 to 2021 are used for training, 2022 is used to choose the Ridge penalty, "
-            "and 2023 is held out for final testing. Basis OLS is the standard basis-function "
+            "To tune Ridge without future information leakage, I use rolling-origin cross-validation "
+            "with five expanding-window folds. The validation years are 2018 through 2022; for "
+            "each fold, the model sees only earlier years. I average validation RMSE across the "
+            "five folds and select lambda 0.0132. I then refit on all data from 2014 through 2022 "
+            "and evaluate once on the untouched 2023 test set. Basis OLS is the standard basis-function "
             "linear regression required by Task 4. Basis Ridge uses the same design matrix "
             "but adds a squared-coefficient penalty, which stabilises coefficients when basis "
             "columns are correlated; it is not a separate black-box model. On the 2023 test "
-            "set, Basis OLS has an RMSE of 2.05 and an R-squared of 0.757. Basis Ridge has an "
-            "RMSE of 2.06 and an R-squared of 0.754. Their predictive performance is almost "
-            "identical. The selected lambda is only 0.0001, so the validation procedure "
-            "indicates that only very weak regularisation is needed."
+            "set, Basis OLS has an RMSE of 1.97 and an R-squared of 0.776. Basis Ridge has an "
+            "RMSE of 1.98 and an R-squared of 0.774, with the lower MAE of 1.05. Their predictive "
+            "performance is almost identical, so I retain Ridge as the stable primary model while "
+            "reporting OLS transparently."
         ),
         "pointing_cues": (
             "依次指左侧B-spline、周期波形和空间基函数；说到测试结果时指右侧OLS与"
-            "Ridge两行；不要把R²读成“75.7%的预测准确率”。"
+            "Ridge两行；不要把R²读成“77.4%的预测准确率”。"
         ),
         "core_sentence": (
             "基函数让线性模型表达非线性的时间、季节和空间结构，Ridge则提高系数稳定性。"
@@ -124,7 +129,8 @@ SPEECH_SECTIONS = [
         "title": "预测、残差与结论",
         "script": (
             "The final slide checks what the model actually learned. The observed and Ridge "
-            "prediction curves share the main annual cycle, and both basis models clearly "
+            "prediction curves share the main annual cycle. Ridge reduces RMSE by 26.8 percent "
+            "relative to the neighbourhood-mean baseline, and both basis models clearly "
             "outperform the citywide-mean and neighbourhood-mean baselines. However, the "
             "largest summer peaks are still underestimated. The residual map also shows that "
             "most neighbourhood errors are modest, while extreme months and a small number "
@@ -271,29 +277,29 @@ PRINCIPLE_SECTIONS = [
         ),
         "formula": "β̂Ridge = argminβ {||z-Xβ||² + λ||β||²₂}。",
         "project_use": (
-            "在2022验证集上从100到0.0001比较100个λ，最终选择λ=0.0001；然后使用"
-            "2014–2022重新拟合，并在2023测试。"
+            "建立5个扩展窗口：分别用此前全部年份训练并验证2018、2019、2020、2021、"
+            "2022。对每个λ求5折平均RMSE，选择λ=0.0132；再用2014–2022重新拟合并测试2023。"
         ),
         "why_suitable": (
-            "Ridge仍属于线性回归，只增加L2惩罚；本项目很小的λ解释了其结果为何与OLS几乎相同。"
+            "Ridge仍属于线性回归，只增加L2惩罚；用多个未来年份验证比只依赖2022一年更稳健。"
         ),
     },
     {
-        "title": "10. 为什么必须按时间切分并使用基线",
+        "title": "10. 为什么使用滚动交叉验证、独立测试集和基线",
         "intuition": (
-            "随机切分会让未来月份进入训练集，相当于提前看到答案。按时间切分才模拟真实任务："
-            "用过去预测未来。基线则回答复杂模型是否真的比简单规则更好。"
+            "普通随机交叉验证会让未来月份进入训练折。滚动交叉验证始终用过去验证较晚年份，"
+            "既能重复检验λ，又保持预测时间顺序。独立测试集和基线分别防止调参偏乐观、检验复杂模型是否有价值。"
         ),
         "formula": (
             "MAE = mean|y-ŷ|；RMSE = sqrt(mean((y-ŷ)²))；"
             "R² = 1-Σ(y-ŷ)²/Σ(y-ȳ)²。"
         ),
         "project_use": (
-            "2014–2021训练、2022验证、2023测试；比较Global mean、Neighbourhood mean、"
-            "Basis OLS和Basis Ridge。"
+            "2018–2022作为5个滚动验证年；选定λ后用2014–2022拟合，2023只评价一次；"
+            "比较Global mean、Neighbourhood mean、Basis OLS和Basis Ridge。"
         ),
         "why_suitable": (
-            "测试集只使用一次，指标更接近未来泛化能力；同时简单基线让性能提升具有可解释参照。"
+            "多个折降低单一年份偶然性，2023不参与调参，因此最终指标更接近真正的未来泛化能力。"
         ),
     },
 ]
@@ -312,11 +318,11 @@ VIVA_QA = [
         ),
     },
     {
-        "question": "2. 为什么不用随机训练测试切分？",
-        "short_answer": "因为目标是用过去预测未来，随机切分会把未来信息泄漏给训练过程。",
+        "question": "2. 这是普通cross-validation吗？为什么不用随机K-fold？",
+        "short_answer": "这是rolling-origin cross-validation；每一折都只用过去训练、用较晚年份验证。",
         "deeper_answer": (
-            "项目按2014–2021训练、2022验证、2023测试；这样模型选择和最终评价的时间"
-            "顺序与真实预测场景一致。"
+            "5折分别验证2018到2022。随机K-fold会让未来月份进入训练折而造成信息泄漏；"
+            "2023完全不参与选择λ，只用于最后一次测试。"
         ),
     },
     {
@@ -337,13 +343,13 @@ VIVA_QA = [
             "能同时证明合规性和稳健性。"
         ),
         "deeper_answer": (
-            "两者测试RMSE只差0.01，验证集选择λ=0.0001，表明本数据只需要很弱的惩罚。"
+            "两者测试RMSE只差0.01；λ=0.0132由5个滚动验证折的平均RMSE选出，不依赖2023测试结果。"
         ),
     },
     {
-        "question": "5. R²=0.757是否等于75.7%的准确率？",
+        "question": "5. R²=0.774是否等于77.4%的准确率？",
         "short_answer": (
-            "不是。它表示模型相对于测试集均值基准减少了约75.7%的平方误差变异，"
+            "不是。它表示模型相对于测试集均值基准减少了约77.4%的平方误差变异，"
             "不是分类正确率。"
         ),
         "deeper_answer": (
@@ -399,8 +405,8 @@ VIVA_QA = [
             "系数稳定性，而不是声称它在这个测试集上数值最优。"
         ),
         "deeper_answer": (
-            "正式报告应明确：OLS取得最低RMSE和最高R²，Ridge取得略低MAE并提供正则化"
-            "稳定性。这样既准确又能解释模型选择。"
+            "正式报告应明确：OLS的RMSE为1.97、R²为0.776；Ridge的RMSE为1.98、R²为0.774，"
+            "但Ridge的MAE更低且λ经过滚动交叉验证选择。这样既准确又能解释模型选择。"
         ),
     },
 ]
