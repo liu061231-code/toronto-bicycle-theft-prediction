@@ -104,4 +104,21 @@ testthat::test_that("teacher feedback outputs are written from fitted models", {
   testthat::expect_equal(nrow(result$seasonal_analysis$monthly), 12L)
   testthat::expect_equal(nrow(result$interaction_comparison), 2L)
   testthat::expect_true(all(file.exists(result$teacher_feedback_paths)))
+
+  candidate_names <- vapply(
+    result$model_fit$candidate_fits,
+    function(candidate) candidate$model,
+    character(1)
+  )
+  additive_fit <- result$model_fit$candidate_fits[[
+    match("Additive Ridge", candidate_names)
+  ]]
+  expected_coefficients <- extract_seasonal_coefficients(
+    additive_fit$ridge_model,
+    additive_fit$selected_lambda
+  )
+  testthat::expect_equal(
+    result$seasonal_analysis$coefficients$estimate,
+    unname(expected_coefficients)
+  )
 })
