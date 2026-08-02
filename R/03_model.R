@@ -49,7 +49,10 @@ make_basis_recipe <- function(train) {
   )
 }
 
-make_design_matrix <- function(data, recipe) {
+make_design_matrix <- function(
+    data,
+    recipe,
+    include_interactions = FALSE) {
   time_basis <- splines::bs(
     data$time_index,
     knots = recipe$time_knots,
@@ -88,12 +91,24 @@ make_design_matrix <- function(data, recipe) {
       )
     )
   )
-  x <- cbind(time_basis, seasonal, rbf, neighborhood_basis)
+  interaction <- NULL
+  if (include_interactions) {
+    interaction <- cbind(
+      sweep(rbf, 1, seasonal[, "sin1"], `*`),
+      sweep(rbf, 1, seasonal[, "cos1"], `*`)
+    )
+    colnames(interaction) <- c(
+      paste0("sin1_x_space_rbf_", seq_len(ncol(rbf))),
+      paste0("cos1_x_space_rbf_", seq_len(ncol(rbf)))
+    )
+  }
+  x <- cbind(time_basis, seasonal, rbf, neighborhood_basis, interaction)
   colnames(x) <- c(
     paste0("time_bs_", seq_len(ncol(time_basis))),
     colnames(seasonal),
     paste0("space_rbf_", seq_len(ncol(rbf))),
-    paste0("area_", seq_len(ncol(neighborhood_basis)))
+    paste0("area_", seq_len(ncol(neighborhood_basis))),
+    colnames(interaction)
   )
   x
 }
@@ -104,12 +119,26 @@ default_lambda_grid <- function() {
 
 cross_validate_ridge <- function(
     panel,
-    lambda_grid = default_lambda_grid()) {
+    lambda_grid = default_lambda_grid(),
+    include_interactions = FALSE) {
+  model_type <- if (include_interactions) {
+    "Season-space Ridge"
+  } else {
+    "Additive Ridge"
+  }
   folds <- make_rolling_folds(panel)
   fold_results <- purrr::map_dfr(folds, function(fold_data) {
     recipe <- make_basis_recipe(fold_data$train)
-    x_train <- make_design_matrix(fold_data$train, recipe)
-    x_validation <- make_design_matrix(fold_data$validation, recipe)
+    x_train <- make_design_matrix(
+      fold_data$train,
+      recipe,
+      include_interactions = include_interactions
+    )
+    x_validation <- make_design_matrix(
+      fold_data$validation,
+      recipe,
+      include_interactions = include_interactions
+    )
     y_train <- log1p(fold_data$train$theft_count)
     ridge <- glmnet::glmnet(
       x_train,
@@ -142,13 +171,14 @@ cross_validate_ridge <- function(
       sd_rmse = stats::sd(RMSE),
       .groups = "drop"
     ) |>
+    dplyr::mutate(model = model_type) |>
     dplyr::arrange(dplyr::desc(lambda))
-  selected_lambda <- summary$lambda[which.min(summary$mean_rmse)]
   list(
+    model_type = model_type,
     folds = folds,
-    fold_results = fold_results,
+    fold_results = dplyr::mutate(fold_results, model = model_type),
     summary = summary,
-    selected_lambda = selected_lambda
+    selected_lambda = summary$lambda[which.min(summary$mean_rmse)]
   )
 }
 
@@ -174,6 +204,59 @@ predict_ols <- function(coefficients, x) {
   as.numeric(cbind(Intercept = 1, x) %*% coefficients)
 }
 
+fit_ridge_candidate <- function(
+    tuning_panel,
+    test,
+    lambda_grid = default_lambda_grid(),
+    include_interactions = FALSE) {
+  cv <- cross_validate_ridge(
+    tuning_panel,
+    lambda_grid,
+    include_interactions = include_interactions
+  )
+  recipe <- make_basis_recipe(tuning_panel)
+  x_final <- make_design_matrix(
+    tuning_panel,
+    recipe,
+    include_interactions = include_interactions
+  )
+  x_test <- make_design_matrix(
+    test,
+    recipe,
+    include_interactions = include_interactions
+  )
+  selected_lambda <- cv$selected_lambda
+  ridge_model <- glmnet::glmnet(
+    x_final,
+    log1p(tuning_panel$theft_count),
+    alpha = 0,
+    lambda = selected_lambda,
+    standardize = TRUE
+  )
+  prediction <- pmax(
+    0,
+    expm1(as.numeric(predict(
+      ridge_model,
+      newx = x_test,
+      s = selected_lambda
+    )))
+  )
+  list(
+    model = cv$model_type,
+    include_interactions = include_interactions,
+    cv = cv,
+    recipe = recipe,
+    ridge_model = ridge_model,
+    selected_lambda = selected_lambda,
+    prediction = prediction,
+    metrics = metric_frame(
+      test$theft_count,
+      prediction,
+      cv$model_type
+    )
+  )
+}
+
 fit_models <- function(
     splits,
     recipe = NULL,
@@ -183,8 +266,27 @@ fit_models <- function(
   test <- splits$test
   tuning_panel <- dplyr::bind_rows(train, validation)
 
-  cv <- cross_validate_ridge(tuning_panel, lambda_grid)
-  selected_lambda <- cv$selected_lambda
+  candidate_specs <- tibble::tibble(
+    model = c("Additive Ridge", "Season-space Ridge"),
+    include_interactions = c(FALSE, TRUE)
+  )
+  candidate_fits <- purrr::map(
+    seq_len(nrow(candidate_specs)),
+    function(i) fit_ridge_candidate(
+      tuning_panel,
+      test,
+      lambda_grid,
+      include_interactions = candidate_specs$include_interactions[i]
+    )
+  )
+  cv_comparison <- purrr::map_dfr(candidate_fits, function(x) {
+    best <- x$cv$summary[which.min(x$cv$summary$mean_rmse), ]
+    dplyr::select(best, model, lambda, mean_rmse, sd_rmse)
+  })
+  primary_model <- cv_comparison$model[which.min(cv_comparison$mean_rmse)]
+  primary_fit <- candidate_fits[[match(primary_model, candidate_specs$model)]]
+  additive_fit <- candidate_fits[[1]]
+  selected_lambda <- additive_fit$selected_lambda
   final_recipe <- make_basis_recipe(tuning_panel)
   x_final <- make_design_matrix(tuning_panel, final_recipe)
   x_test <- make_design_matrix(test, final_recipe)
@@ -209,16 +311,8 @@ fit_models <- function(
     expm1(predict_ols(ols_coefficients, x_test))
   )
 
-  ridge_final <- glmnet::glmnet(
-    x_final, y_final,
-    alpha = 0, lambda = selected_lambda, standardize = TRUE
-  )
-  ridge_prediction <- pmax(
-    0,
-    expm1(as.numeric(predict(
-      ridge_final, newx = x_test, s = selected_lambda
-    )))
-  )
+  ridge_final <- additive_fit$ridge_model
+  ridge_prediction <- additive_fit$prediction
 
   metrics <- dplyr::bind_rows(
     metric_frame(actual_test, global_prediction, "Global mean"),
@@ -238,16 +332,22 @@ fit_models <- function(
       residual = actual - predicted,
       global_mean = global_prediction,
       neighborhood_mean = neighborhood_prediction,
-      basis_ols = ols_prediction
+      basis_ols = ols_prediction,
+      additive_ridge = candidate_fits[[1]]$prediction,
+      season_space_ridge = candidate_fits[[2]]$prediction
     )
   list(
     metrics = metrics,
     test_predictions = predictions,
     selected_lambda = selected_lambda,
-    validation_rmse = min(cv$summary$mean_rmse),
-    cv_results = cv$fold_results,
-    cv_summary = cv$summary,
-    cv_folds = cv$folds,
+    validation_rmse = min(additive_fit$cv$summary$mean_rmse),
+    cv_results = additive_fit$cv$fold_results,
+    cv_summary = additive_fit$cv$summary,
+    cv_folds = additive_fit$cv$folds,
+    cv_comparison = cv_comparison,
+    candidate_fits = candidate_fits,
+    primary_model = primary_model,
+    primary_fit = primary_fit,
     recipe = final_recipe,
     final_training_years = sort(unique(tuning_panel$year)),
     ridge_model = ridge_final,
