@@ -21,6 +21,11 @@ source(file.path(handbook_project_root, "R", "config.R"))
 source(file.path(handbook_project_root, "R", "01_prepare_data.R"))
 source(file.path(handbook_project_root, "R", "02_visualize.R"))
 source(file.path(handbook_project_root, "R", "03_model.R"))
+source(file.path(
+  handbook_project_root,
+  "R",
+  "06_teacher_feedback_analysis.R"
+))
 
 write_handbook_outputs <- function(result) {
   p <- result$paths
@@ -82,6 +87,22 @@ write_handbook_outputs <- function(result) {
     ),
     file.path(p$analysis_dir, "basis_metadata.csv")
   )
+  readr::write_csv(
+    result$seasonal_analysis$coefficients,
+    file.path(p$analysis_dir, "seasonal_coefficients.csv")
+  )
+  readr::write_csv(
+    result$seasonal_analysis$summary,
+    file.path(p$analysis_dir, "seasonal_cycle_summary.csv")
+  )
+  readr::write_csv(
+    result$seasonal_analysis$monthly,
+    file.path(p$analysis_dir, "seasonal_cycle_monthly.csv")
+  )
+  readr::write_csv(
+    result$interaction_comparison,
+    file.path(p$analysis_dir, "interaction_model_comparison.csv")
+  )
   invisible(result)
 }
 
@@ -133,6 +154,27 @@ run_handbook_steps <- function(
   )
   stopifnot(all(file.exists(model_paths)))
 
+  candidate_names <- vapply(
+    model_fit$candidate_fits,
+    function(candidate) candidate$model,
+    character(1)
+  )
+  additive_fit <- model_fit$candidate_fits[[
+    match("Additive Ridge", candidate_names)
+  ]]
+  seasonal_coefficients <- extract_seasonal_coefficients(
+    additive_fit$ridge_model,
+    additive_fit$selected_lambda
+  )
+  seasonal_analysis <- summarise_seasonal_cycle(seasonal_coefficients)
+  interaction_comparison <- build_interaction_model_comparison(model_fit)
+  teacher_feedback_paths <- make_teacher_feedback_plots(
+    seasonal_analysis,
+    interaction_comparison,
+    figure_dir
+  )
+  stopifnot(all(file.exists(teacher_feedback_paths)))
+
   result <- list(
     paths = paths,
     raw = raw,
@@ -149,7 +191,10 @@ run_handbook_steps <- function(
     cv_results = model_fit$cv_results,
     cv_summary = model_fit$cv_summary,
     model_fit = model_fit,
-    model_paths = model_paths
+    model_paths = model_paths,
+    seasonal_analysis = seasonal_analysis,
+    interaction_comparison = interaction_comparison,
+    teacher_feedback_paths = teacher_feedback_paths
   )
   if (write_outputs) {
     write_handbook_outputs(result)

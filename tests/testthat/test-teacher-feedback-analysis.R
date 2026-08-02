@@ -1,5 +1,6 @@
 source(testthat::test_path("..", "..", "R", "config.R"))
 source(testthat::test_path("..", "..", "R", "01_prepare_data.R"))
+source(testthat::test_path("..", "..", "R", "02_visualize.R"))
 source(testthat::test_path("..", "..", "R", "03_model.R"))
 source(testthat::test_path("..", "..", "R", "06_teacher_feedback_analysis.R"))
 
@@ -70,4 +71,55 @@ testthat::test_that("seasonal summary combines non-axis-aligned harmonics", {
     expected_ratio
   )
   testthat::expect_true(all(coefficients != 0))
+})
+
+testthat::test_that("candidate comparison is selected by CV RMSE only", {
+  model_fit <- list(
+    cv_comparison = tibble::tibble(
+      model = c("Additive Ridge", "Season-space Ridge"),
+      lambda = c(0.1, 0.2),
+      mean_rmse = c(2, 1),
+      sd_rmse = c(0.2, 0.1)
+    ),
+    candidate_fits = list(
+      list(metrics = metric_frame(c(1, 2), c(1, 2), "Additive Ridge")),
+      list(metrics = metric_frame(c(1, 2), c(1, 3), "Season-space Ridge"))
+    )
+  )
+
+  comparison <- build_interaction_model_comparison(model_fit)
+
+  testthat::expect_identical(
+    comparison$model[comparison$selected_by_cv],
+    "Season-space Ridge"
+  )
+  testthat::expect_identical(
+    comparison$model[which.min(comparison$test_rmse)],
+    "Additive Ridge"
+  )
+})
+
+testthat::test_that("teacher feedback plots use auditable source tables", {
+  seasonal_analysis <- summarise_seasonal_cycle(
+    c(sin1 = 1, cos1 = 0, sin2 = 0, cos2 = 0)
+  )
+  comparison <- tibble::tibble(
+    model = c("Additive Ridge", "Season-space Ridge"),
+    selected_lambda = c(0.1, 0.2),
+    mean_cv_rmse = c(2, 1),
+    sd_cv_rmse = c(0.2, 0.1),
+    test_mae = c(0, 0.5),
+    test_rmse = c(0, 1 / sqrt(2)),
+    test_r2 = c(1, 0),
+    selected_by_cv = c(FALSE, TRUE)
+  )
+
+  testthat::expect_s3_class(
+    make_fitted_seasonal_cycle_plot(seasonal_analysis),
+    "ggplot"
+  )
+  testthat::expect_s3_class(
+    make_interaction_model_comparison_plot(comparison),
+    "ggplot"
+  )
 })

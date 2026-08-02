@@ -62,7 +62,11 @@ testthat::test_that("handbook workflow exposes verified intermediate objects", {
     "cross_validation_results.csv",
     "model_metrics.csv",
     "test_predictions.csv",
-    "basis_metadata.csv"
+    "basis_metadata.csv",
+    "seasonal_coefficients.csv",
+    "seasonal_cycle_summary.csv",
+    "seasonal_cycle_monthly.csv",
+    "interaction_model_comparison.csv"
   )
   testthat::expect_true(all(file.exists(file.path(
     output_result$paths$analysis_dir,
@@ -87,4 +91,17 @@ testthat::test_that("handbook and saved pipeline metrics are identical", {
     as.data.frame(expected),
     tolerance = 1e-8
   )
+})
+
+testthat::test_that("teacher feedback outputs are written from fitted models", {
+  result <- run_handbook_steps(write_outputs = FALSE)
+  testthat::expect_true(all(c(
+    "seasonal_analysis",
+    "interaction_comparison",
+    "teacher_feedback_paths"
+  ) %in% names(result)))
+  testthat::expect_equal(nrow(result$seasonal_analysis$coefficients), 4L)
+  testthat::expect_equal(nrow(result$seasonal_analysis$monthly), 12L)
+  testthat::expect_equal(nrow(result$interaction_comparison), 2L)
+  testthat::expect_true(all(file.exists(result$teacher_feedback_paths)))
 })
