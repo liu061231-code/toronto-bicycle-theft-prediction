@@ -115,3 +115,47 @@ testthat::test_that("final models tune before the untouched 2023 test", {
     ]
   )
 })
+
+testthat::test_that("annual season by spatial RBF interactions are explicit products", {
+  base <- make_design_matrix(splits$train, recipe)
+  interacted <- make_design_matrix(
+    splits$train,
+    recipe,
+    include_interactions = TRUE
+  )
+
+  expected <- c(
+    paste0("sin1_x_space_rbf_", 1:16),
+    paste0("cos1_x_space_rbf_", 1:16)
+  )
+  testthat::expect_true(all(expected %in% colnames(interacted)))
+  testthat::expect_equal(ncol(interacted), ncol(base) + 32L)
+  testthat::expect_equal(
+    interacted[, "sin1_x_space_rbf_1"],
+    interacted[, "sin1"] * interacted[, "space_rbf_1"]
+  )
+  testthat::expect_equal(
+    interacted[, "cos1_x_space_rbf_16"],
+    interacted[, "cos1"] * interacted[, "space_rbf_16"]
+  )
+})
+
+testthat::test_that("rolling CV labels additive and interaction candidates", {
+  tuning_panel <- dplyr::bind_rows(splits$train, splits$validation)
+  lambda_grid <- c(0.1, 0.01)
+  additive <- cross_validate_ridge(
+    tuning_panel,
+    lambda_grid,
+    include_interactions = FALSE
+  )
+  interaction <- cross_validate_ridge(
+    tuning_panel,
+    lambda_grid,
+    include_interactions = TRUE
+  )
+
+  testthat::expect_identical(additive$model_type, "Additive Ridge")
+  testthat::expect_identical(interaction$model_type, "Season-space Ridge")
+  testthat::expect_true(all(additive$summary$model == "Additive Ridge"))
+  testthat::expect_true(all(interaction$summary$model == "Season-space Ridge"))
+})
