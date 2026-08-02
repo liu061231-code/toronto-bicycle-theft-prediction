@@ -66,6 +66,8 @@ build_interaction_model_comparison <- function(model_fit) {
 }
 
 make_fitted_seasonal_cycle_plot <- function(seasonal_analysis) {
+  peak_month <- seasonal_analysis$summary$peak_month[[1]]
+  stopifnot(peak_month %in% 1:12)
   ggplot2::ggplot(
     seasonal_analysis$monthly,
     ggplot2::aes(month, seasonal_multiplier)
@@ -79,7 +81,11 @@ make_fitted_seasonal_cycle_plot <- function(seasonal_analysis) {
     ggplot2::geom_point(color = "#0B7C83", size = 2.2) +
     ggplot2::scale_x_continuous(breaks = 1:12, labels = month.abb) +
     ggplot2::labs(
-      title = "Estimated coefficients imply a July seasonal peak",
+      title = paste0(
+        "Estimated coefficients imply a ",
+        month.name[[peak_month]],
+        " seasonal peak"
+      ),
       subtitle = paste(
         "Seasonal multiplier for 1 + count,",
         "holding other components fixed"
@@ -273,6 +279,13 @@ make_primary_residual_map_plot <- function(
     boundaries = NULL) {
   residuals <- primary_analysis$residuals
   limit <- max(abs(residuals$mean_residual))
+  caption <- "Selected by minimum mean rolling-CV RMSE."
+  if (!is.null(boundaries)) {
+    caption <- paste(
+      "Selected by minimum mean rolling-CV RMSE;",
+      "City of Toronto historical 140-neighbourhood boundaries."
+    )
+  }
   plot <- ggplot2::ggplot(
     residuals,
     ggplot2::aes(
@@ -327,10 +340,7 @@ make_primary_residual_map_plot <- function(
       color = "Mean residual",
       size = "Absolute residual",
       shape = "Direction",
-      caption = paste(
-        "Selected by minimum mean rolling-CV RMSE;",
-        "City of Toronto historical 140-neighbourhood boundaries."
-      )
+      caption = caption
     ) +
     handbook_theme() +
     ggplot2::theme(

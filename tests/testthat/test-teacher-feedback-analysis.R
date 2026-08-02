@@ -114,10 +114,9 @@ testthat::test_that("teacher feedback plots use auditable source tables", {
     selected_by_cv = c(FALSE, TRUE)
   )
 
-  testthat::expect_s3_class(
-    make_fitted_seasonal_cycle_plot(seasonal_analysis),
-    "ggplot"
-  )
+  seasonal_plot <- make_fitted_seasonal_cycle_plot(seasonal_analysis)
+  testthat::expect_s3_class(seasonal_plot, "ggplot")
+  testthat::expect_match(seasonal_plot$labels$title, "March")
   testthat::expect_s3_class(
     make_interaction_model_comparison_plot(comparison),
     "ggplot"
@@ -153,10 +152,13 @@ testthat::test_that("primary figure data use the CV-selected fit predictions", {
     make_primary_observed_vs_predicted_plot(analysis)$data,
     analysis$monthly
   )
-  testthat::expect_equal(
-    make_primary_residual_map_plot(analysis)$data,
-    analysis$residuals
-  )
+  offline_residual_plot <- make_primary_residual_map_plot(analysis)
+  testthat::expect_equal(offline_residual_plot$data, analysis$residuals)
+  testthat::expect_false(grepl(
+    "City of Toronto",
+    offline_residual_plot$labels$caption,
+    fixed = TRUE
+  ))
 })
 
 testthat::test_that("primary figure data reject rows outside untouched 2023", {

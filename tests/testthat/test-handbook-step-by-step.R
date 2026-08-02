@@ -93,6 +93,84 @@ testthat::test_that("handbook and saved pipeline metrics are identical", {
   )
 })
 
+testthat::test_that("tracked predictions audit primary 2023 figure data", {
+  source(script_path)
+  result <- run_handbook_steps(write_outputs = FALSE)
+  saved <- readr::read_csv(
+    file.path(result$paths$analysis_dir, "test_predictions.csv"),
+    show_col_types = FALSE
+  ) |>
+    dplyr::mutate(month = as.Date(month))
+  required <- c(
+    "additive_ridge",
+    "season_space_ridge",
+    "predicted",
+    "residual"
+  )
+  has_required <- all(required %in% names(saved))
+  testthat::expect_true(has_required)
+  if (!has_required) {
+    return(invisible())
+  }
+
+  runtime <- result$primary_prediction_analysis$predictions
+  keys <- c("month", "year", "neighborhood")
+  testthat::expect_equal(sort(unique(saved$year)), 2023L)
+  testthat::expect_false(anyDuplicated(saved[keys]) > 0L)
+  testthat::expect_false(anyDuplicated(runtime[keys]) > 0L)
+  testthat::expect_equal(
+    nrow(dplyr::anti_join(saved, runtime, by = keys)),
+    0L
+  )
+  testthat::expect_equal(
+    nrow(dplyr::anti_join(runtime, saved, by = keys)),
+    0L
+  )
+
+  joined <- saved |>
+    dplyr::select(
+      dplyr::all_of(keys),
+      saved_lon = lon,
+      saved_lat = lat,
+      saved_actual = actual,
+      saved_predicted = predicted,
+      saved_residual = residual,
+      additive_ridge,
+      season_space_ridge
+    ) |>
+    dplyr::inner_join(
+      runtime |>
+        dplyr::select(
+          dplyr::all_of(keys),
+          runtime_lon = lon,
+          runtime_lat = lat,
+          runtime_actual = actual,
+          runtime_prediction = predicted,
+          runtime_residual = residual
+        ),
+      by = keys
+    ) |>
+    dplyr::arrange(month, year, neighborhood)
+
+  testthat::expect_equal(nrow(joined), 1680L)
+  testthat::expect_equal(joined$saved_lon, joined$runtime_lon)
+  testthat::expect_equal(joined$saved_lat, joined$runtime_lat)
+  testthat::expect_equal(joined$saved_actual, joined$runtime_actual)
+  testthat::expect_equal(
+    joined$season_space_ridge,
+    joined$runtime_prediction
+  )
+  testthat::expect_equal(
+    joined$saved_actual - joined$season_space_ridge,
+    joined$runtime_residual
+  )
+  testthat::expect_equal(
+    joined$saved_residual,
+    joined$saved_actual - joined$saved_predicted
+  )
+  testthat::expect_equal(joined$additive_ridge, joined$saved_predicted)
+})
+
 testthat::test_that("teacher feedback outputs are written from fitted models", {
   result <- run_handbook_steps(write_outputs = FALSE)
   testthat::expect_true(all(c(
