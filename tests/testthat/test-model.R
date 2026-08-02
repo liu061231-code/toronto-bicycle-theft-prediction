@@ -94,7 +94,7 @@ testthat::test_that("Ridge lambda minimises mean rolling validation RMSE", {
 testthat::test_that("final models tune before the untouched 2023 test", {
   cv_fit <- fit_models(
     splits,
-    lambda_grid = c(1, 0.1, 0.01)
+    lambda_grid = c(10, 0.1, 0.001)
   )
   testthat::expect_equal(
     sort(unique(cv_fit$cv_results$validation_year)),
@@ -114,6 +114,45 @@ testthat::test_that("final models tune before the untouched 2023 test", {
       which.min(cv_fit$cv_summary$mean_rmse)
     ]
   )
+  testthat::expect_length(cv_fit$candidate_fits, 2L)
+  required_candidate_fields <- c(
+    "model", "include_interactions", "cv", "recipe",
+    "ridge_model", "selected_lambda", "prediction", "metrics"
+  )
+  testthat::expect_true(all(vapply(
+    cv_fit$candidate_fits,
+    function(candidate) {
+      all(required_candidate_fields %in% names(candidate))
+    },
+    logical(1)
+  )))
+  testthat::expect_identical(
+    names(cv_fit$cv_comparison),
+    c("model", "lambda", "mean_rmse", "sd_rmse")
+  )
+  testthat::expect_true(all(c(
+    "additive_ridge", "season_space_ridge"
+  ) %in% names(cv_fit$test_predictions)))
+  cv_selected_model <- cv_fit$cv_comparison$model[
+    which.min(cv_fit$cv_comparison$mean_rmse)
+  ]
+  testthat::expect_identical(cv_fit$primary_model, cv_selected_model)
+  testthat::expect_identical(
+    cv_fit$primary_fit$model,
+    cv_fit$primary_model
+  )
+  test_metrics <- purrr::map_dfr(
+    cv_fit$candidate_fits,
+    function(candidate) candidate$metrics
+  )
+  test_selected_model <- test_metrics$model[
+    which.min(test_metrics$RMSE)
+  ]
+  testthat::expect_identical(cv_fit$primary_model, "Season-space Ridge")
+  testthat::expect_identical(test_selected_model, "Additive Ridge")
+  testthat::expect_false(
+    identical(cv_fit$primary_model, test_selected_model)
+  )
 })
 
 testthat::test_that("annual season by spatial RBF interactions are explicit products", {
@@ -123,12 +162,22 @@ testthat::test_that("annual season by spatial RBF interactions are explicit prod
     recipe,
     include_interactions = TRUE
   )
+  validation_interacted <- make_design_matrix(
+    splits$validation,
+    recipe,
+    include_interactions = TRUE
+  )
 
-  expected <- c(
+  expected_interactions <- c(
     paste0("sin1_x_space_rbf_", 1:16),
     paste0("cos1_x_space_rbf_", 1:16)
   )
-  testthat::expect_true(all(expected %in% colnames(interacted)))
+  expected_columns <- c(colnames(base), expected_interactions)
+  testthat::expect_identical(colnames(interacted), expected_columns)
+  testthat::expect_identical(
+    colnames(validation_interacted),
+    expected_columns
+  )
   testthat::expect_equal(ncol(interacted), ncol(base) + 32L)
   testthat::expect_equal(
     interacted[, "sin1_x_space_rbf_1"],
