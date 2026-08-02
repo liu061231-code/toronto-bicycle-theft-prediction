@@ -98,12 +98,19 @@ testthat::test_that("teacher feedback outputs are written from fitted models", {
   testthat::expect_true(all(c(
     "seasonal_analysis",
     "interaction_comparison",
-    "teacher_feedback_paths"
+    "teacher_feedback_paths",
+    "primary_prediction_analysis",
+    "primary_model_paths"
   ) %in% names(result)))
   testthat::expect_equal(nrow(result$seasonal_analysis$coefficients), 4L)
   testthat::expect_equal(nrow(result$seasonal_analysis$monthly), 12L)
   testthat::expect_equal(nrow(result$interaction_comparison), 2L)
   testthat::expect_true(all(file.exists(result$teacher_feedback_paths)))
+  testthat::expect_true(all(file.exists(result$primary_model_paths)))
+  testthat::expect_equal(
+    result$primary_prediction_analysis$predictions$predicted,
+    result$model_fit$primary_fit$prediction
+  )
 
   candidate_names <- vapply(
     result$model_fit$candidate_fits,

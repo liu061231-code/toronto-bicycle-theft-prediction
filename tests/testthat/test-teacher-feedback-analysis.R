@@ -123,3 +123,86 @@ testthat::test_that("teacher feedback plots use auditable source tables", {
     "ggplot"
   )
 })
+
+testthat::test_that("primary figure data use the CV-selected fit predictions", {
+  test_rows <- tibble::tibble(
+    month = as.Date(c("2023-01-01", "2023-01-01", "2023-02-01")),
+    year = 2023L,
+    neighborhood = c("Area A (1)", "Area B (2)", "Area A (1)"),
+    lon = c(-79.4, -79.3, -79.4),
+    lat = c(43.7, 43.8, 43.7),
+    theft_count = c(3, 4, 5)
+  )
+  model_fit <- list(
+    primary_model = "Season-space Ridge",
+    primary_fit = list(prediction = c(2.5, 4.5, 6))
+  )
+
+  analysis <- prepare_primary_prediction_analysis(model_fit, test_rows)
+
+  testthat::expect_equal(
+    analysis$predictions$predicted,
+    model_fit$primary_fit$prediction
+  )
+  testthat::expect_equal(
+    analysis$predictions$residual,
+    test_rows$theft_count - model_fit$primary_fit$prediction
+  )
+  testthat::expect_identical(analysis$model, "Season-space Ridge")
+  testthat::expect_equal(
+    make_primary_observed_vs_predicted_plot(analysis)$data,
+    analysis$monthly
+  )
+  testthat::expect_equal(
+    make_primary_residual_map_plot(analysis)$data,
+    analysis$residuals
+  )
+})
+
+testthat::test_that("primary figure data reject rows outside untouched 2023", {
+  non_test_rows <- tibble::tibble(
+    month = as.Date("2022-12-01"),
+    year = 2022L,
+    neighborhood = "Area A (1)",
+    lon = -79.4,
+    lat = 43.7,
+    theft_count = 3
+  )
+  model_fit <- list(
+    primary_model = "Season-space Ridge",
+    primary_fit = list(prediction = 2.5)
+  )
+
+  testthat::expect_error(
+    prepare_primary_prediction_analysis(model_fit, non_test_rows),
+    "untouched 2023"
+  )
+})
+
+testthat::test_that("primary model figure files are produced separately", {
+  test_rows <- tibble::tibble(
+    month = as.Date(c("2023-01-01", "2023-01-01", "2023-02-01")),
+    year = 2023L,
+    neighborhood = c("Area A (1)", "Area B (2)", "Area A (1)"),
+    lon = c(-79.4, -79.3, -79.4),
+    lat = c(43.7, 43.8, 43.7),
+    theft_count = c(3, 4, 5)
+  )
+  model_fit <- list(
+    primary_model = "Season-space Ridge",
+    primary_fit = list(prediction = c(2.5, 4.5, 6))
+  )
+  analysis <- prepare_primary_prediction_analysis(model_fit, test_rows)
+  figure_dir <- tempfile("stat3888-primary-model-figures-")
+
+  paths <- make_primary_model_plots(analysis, figure_dir)
+
+  testthat::expect_identical(
+    names(paths),
+    c("prediction", "residual")
+  )
+  testthat::expect_true(all(file.exists(paths)))
+  testthat::expect_true(all(file.info(paths)$size > 20000))
+  testthat::expect_match(paths[["prediction"]], "12_primary_")
+  testthat::expect_match(paths[["residual"]], "13_primary_")
+})

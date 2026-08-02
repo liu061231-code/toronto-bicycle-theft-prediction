@@ -20,6 +20,11 @@ handbook_project_root <- local({
 source(file.path(handbook_project_root, "R", "config.R"))
 source(file.path(handbook_project_root, "R", "01_prepare_data.R"))
 source(file.path(handbook_project_root, "R", "02_visualize.R"))
+source(file.path(
+  handbook_project_root,
+  "R",
+  "04_neighbourhood_boundaries.R"
+))
 source(file.path(handbook_project_root, "R", "03_model.R"))
 source(file.path(
   handbook_project_root,
@@ -108,7 +113,12 @@ write_handbook_outputs <- function(result) {
 
 run_handbook_steps <- function(
     write_outputs = TRUE,
-    workspace_root = handbook_project_root) {
+    workspace_root = handbook_project_root,
+    boundary_source = if (write_outputs) {
+      historical_neighbourhoods_url
+    } else {
+      NULL
+    }) {
   paths <- project_paths(workspace_root)
   ensure_packages()
   dir.create(paths$analysis_dir, recursive = TRUE, showWarnings = FALSE)
@@ -174,6 +184,21 @@ run_handbook_steps <- function(
     figure_dir
   )
   stopifnot(all(file.exists(teacher_feedback_paths)))
+  primary_prediction_analysis <- prepare_primary_prediction_analysis(
+    model_fit,
+    splits$test
+  )
+  primary_boundaries <- if (is.null(boundary_source)) {
+    NULL
+  } else {
+    read_historical_neighbourhoods(boundary_source)
+  }
+  primary_model_paths <- make_primary_model_plots(
+    primary_prediction_analysis,
+    figure_dir,
+    boundaries = primary_boundaries
+  )
+  stopifnot(all(file.exists(primary_model_paths)))
 
   result <- list(
     paths = paths,
@@ -194,7 +219,9 @@ run_handbook_steps <- function(
     model_paths = model_paths,
     seasonal_analysis = seasonal_analysis,
     interaction_comparison = interaction_comparison,
-    teacher_feedback_paths = teacher_feedback_paths
+    teacher_feedback_paths = teacher_feedback_paths,
+    primary_prediction_analysis = primary_prediction_analysis,
+    primary_model_paths = primary_model_paths
   )
   if (write_outputs) {
     write_handbook_outputs(result)
