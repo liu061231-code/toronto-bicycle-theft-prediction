@@ -40,11 +40,14 @@ R/
 handbook/
 deliverables/
 docs/
-scripts/
 tests/
 tmp/
 .worktrees/
 .superpowers/
+
+# Legacy scripts only; the two data-acquisition scripts below are kept.
+scripts/*.R
+scripts/*.sh
 
 # --- Raw data (large; see README "Dataset" for download instructions) ---
 data/raw/

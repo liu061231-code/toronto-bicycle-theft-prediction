@@ -16,6 +16,7 @@ stringr
 forcats
 lubridate
 ggplot2
+scales
 splines
 glmnet
 MASS

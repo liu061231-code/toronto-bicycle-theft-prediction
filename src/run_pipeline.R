@@ -10,7 +10,7 @@
 #   3. time-aware split + expanding-window CV
 #   4. compare baselines and candidate models fairly
 #   5. tune the regularisation strength of the best model
-#   6. final hold-out evaluation on 2023
+#   6. final hold-out evaluation on 2025
 #   7. write comparison tables and diagnostic figures
 
 library(dplyr)
@@ -86,7 +86,7 @@ main <- function() {
   best_lambda <- lambda_cv$lambda[which.min(lambda_cv$cv_RMSE)]
   message("  Best lambda = ", format(best_lambda, digits = 4))
 
-  message("6/7 Final hold-out evaluation on 2023 ...")
+  message("6/7 Final hold-out evaluation on 2025 ...")
   # Refit the tuned Ridge model on train+validation and score the test set.
   final_model <- model_ridge_log(lambda = best_lambda)
   holdout <- dplyr::bind_rows(lapply(names(models), function(nm) {

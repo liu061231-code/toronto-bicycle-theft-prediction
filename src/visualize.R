@@ -34,7 +34,7 @@ plot_monthly_trend <- function(panel) {
       na.rm = TRUE
     ) +
     ggplot2::labs(
-      title = "Reported bicycle thefts in Toronto, 2014\u20132023",
+      title = "Reported bicycle thefts in Toronto, 2014\u20132025",
       subtitle = "Monthly citywide totals with a trailing 12-month mean",
       x = NULL, y = "Reported thefts"
     ) +
@@ -55,7 +55,7 @@ plot_seasonality <- function(panel) {
     ) +
     ggplot2::labs(
       title = "Seasonal pattern of bicycle thefts",
-      subtitle = "Each box summarises the same calendar month across 10 years",
+      subtitle = "Each box summarises the same calendar month across 12 years",
       x = "Month", y = "Reported thefts"
     ) +
     ggplot2::scale_x_discrete(labels = month.abb) +
@@ -93,7 +93,7 @@ plot_observed_vs_predicted <- function(predictions) {
     ggplot2::geom_point(alpha = 0.35, size = 1.6, color = "#1B4965") +
     ggplot2::coord_equal() +
     ggplot2::labs(
-      title = "Observed vs predicted theft counts (2023 hold-out)",
+      title = "Observed vs predicted theft counts (2025 hold-out)",
       subtitle = "Each point is one neighbourhood-month; the solid line is perfect prediction",
       x = "Predicted thefts", y = "Observed thefts"
     ) +
@@ -108,7 +108,7 @@ plot_residual_distribution <- function(predictions) {
     ) +
     ggplot2::geom_vline(xintercept = 0, color = "#D95F02", linewidth = 0.8) +
     ggplot2::labs(
-      title = "Distribution of prediction residuals (2023)",
+      title = "Distribution of prediction residuals (2025)",
       subtitle = "Residual = observed \u2212 predicted; centred near zero indicates low bias",
       x = "Residual (thefts)", y = "Count"
     ) +

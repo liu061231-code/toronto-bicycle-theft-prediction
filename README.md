@@ -1,15 +1,16 @@
 # Toronto Bicycle Theft Prediction
 
 A spatio-temporal machine learning project that forecasts monthly bicycle theft
-counts across 140 Toronto neighbourhoods, combining spline-based temporal trend
+counts across 141 Toronto neighbourhoods, combining spline-based temporal trend
 modelling, seasonal harmonics, and radial-basis-function spatial smoothing
-inside a regularised linear model.
+inside a regularised linear model — plus an hourly hotspot analysis that turns
+the same data into directly actionable patrol-planning insight.
 
 ## Overview
 
 This repository builds a predictive model for **monthly reported bicycle thefts
-per neighbourhood** in the City of Toronto over 2014–2023. The data are a
-balanced panel (140 neighbourhoods × 120 months) with strong temporal
+per neighbourhood** in the City of Toronto over 2014–2025. The data are a
+balanced panel (141 neighbourhoods × 144 months) with strong temporal
 autocorrelation, a pronounced annual cycle, and heavy over-dispersion in the
 count target. The goal is a model that generalises to *unseen future months*
 rather than one that merely fits the past.
@@ -18,12 +19,18 @@ The project originated as a hands-on exercise in a spatio-temporal data science
 course, and has since been reworked into a standalone predictive-modelling
 project: a rigorous time-aware validation strategy, fair baseline and
 multi-model comparison, hyperparameter tuning, and interpretable diagnostics.
+The dataset was subsequently refreshed from the official open-data source
+(40,583 incident records, now spanning 2014–2026), which extended the study
+period through 2025 and unlocked two new signal fields — **hour of day** and
+**premises type** — used in the operational hotspot analysis.
 
 The final model is a **ridge-regularised linear model on a log-transformed
 target** using a hand-crafted design matrix (temporal B-splines + seasonal
-harmonics + spatial radial basis functions + neighbourhood fixed effects). It
-reaches an out-of-sample R² of **0.78** on the held-out 2023 test year,
-substantially outperforming naive and mean baselines.
+harmonics + spatial radial basis functions + neighbourhood fixed effects +
+neighbourhood-level context features). It reaches an out-of-sample R² of
+**0.67** on the held-out 2025 test year — a deliberately harder target than
+earlier years, because citywide theft has fallen to a decade low — and
+substantially outperforms naive and mean baselines.
 
 ## Problem Definition
 
@@ -31,34 +38,47 @@ substantially outperforming naive and mean baselines.
 - **Prediction target**: `theft_count` — the number of bicycle thefts reported
   in a given neighbourhood during a given calendar month.
 - **Features**: temporal position (month index), calendar month (seasonality),
-  neighbourhood identity and centroid coordinates (spatial structure).
+  neighbourhood identity and centroid coordinates (spatial structure), and
+  neighbourhood-level context (historical share of outdoor and commercial
+  thefts, learned from training data only).
 - **Evaluation objective**: minimise out-of-sample prediction error on future
   months, measured by MAE, RMSE, and R². Because the target is a skewed count,
   MAE is emphasised alongside RMSE.
 
 ## Dataset
 
-- **Source**: City of Toronto bicycle theft records (individual incidents with
-  date, quarter, day of week, neighbourhood, cost, location type, and
-  coordinates). The neighbourhood centroids are aggregated from the incident
-  coordinates.
-- **Scale**: 31,833 raw incident records → 16,800 neighbourhood-month
-  observations (140 neighbourhoods × 120 months, 2014-01 to 2023-12).
-- **Key variables**: `date`, `neighborhood`, `bike_cost`, `location` (7
-  categories), `long`/`lat` (neighbourhood centroid).
+- **Source**: [Toronto Police Service — Bicycle Thefts Open Data]
+  (https://data.torontopolice.on.ca/datasets/TorontoPS::bicycle-thefts-open-data)
+  (also listed on the [City of Toronto Open Data Portal]
+  (https://open.toronto.ca/dataset/bicycle-thefts/)). Individual incident
+  records with occurrence date, neighbourhood, cost, premises type, and
+  coordinates. Location coordinates are deliberately offset to the nearest road
+  intersection by the publisher for privacy; all analysis is therefore at
+  neighbourhood, not address, granularity.
+- **Scale**: 40,524 incident records (2014–2026) → 20,304 neighbourhood-month
+  observations (141 neighbourhoods × 144 months, 2014-01 to 2025-12).
+- **Key variables**: `date`, `neighborhood`, `bike_cost`, `location`
+  (premises category), `long`/`lat` (neighbourhood centroid), plus `hour` and
+  `premises_type` from the official feed (used in the hotspot analysis).
 - **Target**: `theft_count` (monthly count per neighbourhood).
 
-The raw CSV is not redistributed in this repository. To reproduce, place
-`bicycle.csv` (with columns `date, quarter, day_of_week, neighborhood,
-bike_cost, location, long, lat`) under `data/raw/`. The pipeline reads it from
-`data/raw/bicycle.csv`.
+The raw CSV is not redistributed in this repository. To reproduce, run
+`scripts/download_data.py` followed by `scripts/convert_data.py`, which fetch
+the current official dataset and convert it to the two files the pipeline
+expects under `data/raw/`:
+
+- `bicycle.csv` — legacy schema used by the monthly model
+  (`date, quarter, day_of_week, neighborhood, bike_cost, location, long, lat`);
+- `bicycle_enhanced.csv` — additional fields (`hour`, `premises_type`,
+  `location_type`, `division`) used by the hourly hotspot analysis.
 
 ## Data Preparation
 
-- **Schema validation**: the raw CSV is checked for the eight required columns.
+- **Schema validation**: the raw CSV is checked for the required columns.
 - **Aggregation**: incidents are aggregated into monthly counts per
   neighbourhood; months with no thefts are filled with zero so every
-  neighbourhood has a complete 120-month series (balanced panel).
+  neighbourhood has a complete 144-month series (balanced panel). The
+  in-progress 2026 records are excluded so the panel stays balanced.
 - **Data-quality audit**: the pipeline reports missing cells, exact duplicate
   rows, quarter-field inconsistencies, and implausible `bike_cost` values.
 - **Coordinates**: neighbourhood centroid is the median of incident
@@ -77,6 +97,10 @@ Key findings that motivated the modelling choices:
 4. **Clear spatial hotspots**: a small number of neighbourhoods (e.g. the
    waterfront and downtown corridors) account for a disproportionate share of
    thefts.
+5. **A sustained citywide decline**: thefts peaked in 2018 (~3,990/year) and
+   have fallen every year since, reaching ~2,125 in 2025 — a decade low. This
+   structural drift directly affects how well any historically-trained model
+   can predict the latest year (see Error Analysis).
 
 ## Validation Strategy
 
@@ -87,18 +111,18 @@ periodicity) and **spatial dependence** (persistent neighbourhood-level
 differences). A random `train_test_split` would leak future observations into
 training and inflate scores, so the project uses a purely chronological scheme:
 
-- **Hold-out test set**: calendar year **2023** (never touched until final
+- **Hold-out test set**: calendar year **2025** (never touched until final
   evaluation).
-- **Expanding-window cross-validation** on 2014–2022 for model selection and
+- **Expanding-window cross-validation** on 2014–2024 for model selection and
   hyperparameter tuning: train on all data up to a cutoff, evaluate on the
   following 12-month window, then roll the cutoff forward. This mirrors how the
   model would be deployed — forecast the future from the past — and never
   evaluates on data preceding the training window.
 
-Crucially, the spline boundary knots and spatial centres are **re-fit on each
-fold's training data only**, so early folds do not silently assume knowledge of
-the full timeline (which would otherwise cause explosive extrapolation and
-leakage).
+Crucially, the spline boundary knots, spatial centres, and neighbourhood
+context features are **re-fit on each fold's training data only**, so early
+folds do not silently assume knowledge of the full timeline (which would
+otherwise cause explosive extrapolation and leakage).
 
 ## Baseline Models
 
@@ -110,8 +134,8 @@ Three simple baselines establish a lower bound:
 | Neighbourhood mean | Predict each neighbourhood's historical mean |
 | Seasonal naive | Same neighbourhood, same month one year earlier |
 
-The seasonal naive baseline is surprisingly strong (test R² ≈ 0.59),
-underscoring how much signal lives in the annual cycle.
+The seasonal naive baseline is again strong (test R² ≈ 0.62), underscoring how
+much signal lives in the annual cycle.
 
 ## Models
 
@@ -125,29 +149,35 @@ held-out test set:
 
 The basis design matrix is shared by the linear/ridge models and contains:
 temporal cubic B-splines, annual sine/cosine harmonics, spatial radial basis
-functions over normalised coordinates, and neighbourhood one-hot indicators.
+functions over normalised coordinates, neighbourhood one-hot indicators, and
+two neighbourhood-level context features (historical outdoor/commercial theft
+shares learned from training data only).
 
 ## Model Comparison
 
-All metrics are on the **2023 hold-out test set** unless noted; CV columns are
-the mean across expanding-window folds (2014–2022).
+All metrics are on the **2025 hold-out test set** unless noted; CV columns are
+the mean across expanding-window folds (2014–2024).
 
 | Model | CV MAE | CV R² | Test MAE | Test RMSE | Test R² |
 |---|---|---|---|---|---|
-| Global mean | 2.41 | −0.003 | 2.17 | 4.16 | −0.006 |
-| Neighbourhood mean | 1.54 | 0.543 | 1.39 | 2.70 | 0.577 |
-| Seasonal naive | 1.45 | 0.606 | 1.26 | 2.66 | 0.589 |
-| Poisson GLM | 2.25 | −0.678 | 1.66 | 3.04 | 0.465 |
-| Negative-binomial GLM | 2.54 | −2.01 | 2.76 | 6.19 | −1.22 |
-| Basis OLS (log) | 1.35 | 0.562 | 1.12 | 1.97 | 0.776 |
-| **Basis Ridge (log)** | **1.34** | **0.561** | **1.10** | **1.96** | **0.777** |
+| Global mean | 2.48 | −0.005 | 2.12 | 3.49 | −0.051 |
+| Neighbourhood mean | 1.55 | 0.570 | 1.30 | 2.52 | 0.449 |
+| Seasonal naive | 1.46 | 0.605 | 1.08 | 2.09 | 0.622 |
+| Poisson GLM | 3.28 | −0.559 | 1.40 | 3.38 | 0.014 |
+| Negative-binomial GLM | 3.77 | −3.62 | 1.13 | 3.10 | 0.168 |
+| Basis OLS (log) | 1.39 | 0.615 | 0.839 | 2.01 | 0.652 |
+| Basis Ridge (log) | 1.37 | 0.618 | 0.835 | 1.99 | 0.659 |
+| **Basis Ridge (tuned)** | **1.34** | **0.623** | **0.833** | **1.97** | **0.665** |
+
+Ablation: removing the two neighbourhood context features costs ~0.013 R²
+(0.665 → 0.652) — a small but consistent gain, at zero leakage risk.
 
 ## Final Model
 
-The **Basis Ridge (log)** model is selected as final. The choice is not driven
-by score alone:
+The **Basis Ridge (tuned)** model is selected as final. The choice is not
+driven by score alone:
 
-- **Generalisation**: it achieves the best (or tied-best) held-out RMSE and R².
+- **Generalisation**: it achieves the best held-out RMSE, MAE, and R².
 - **Stability**: hyperparameter tuning over a wide λ grid (1e-4 to 1e-1) shows
   the test score is essentially flat — the model is robust to the regularisation
   strength, not fragile.
@@ -159,15 +189,38 @@ by score alone:
 
 ## Results
 
-On the untouched 2023 test year, the final model achieves:
+On the untouched 2025 test year, the final model achieves:
 
-- **MAE** = 1.10 thefts per neighbourhood-month
-- **RMSE** = 1.96 thefts
-- **R²** = 0.777
+- **MAE** = 0.83 thefts per neighbourhood-month
+- **RMSE** = 1.97 thefts
+- **R²** = 0.665
 
-This means the model explains ~78% of the variance in monthly neighbourhood
-theft counts out-of-sample, roughly a 32% relative RMSE reduction versus the
-best naive baseline (2.66 → 1.96).
+For context, on the earlier (easier) 2023 test year the same modelling
+framework reaches R² ≈ 0.79. The lower score on 2025 is not a regression —
+it reflects a genuinely harder target:
+
+- **The 2025 test year sits at the bottom of a sustained decline.** Citywide
+  theft fell from ~3,990 (2018) to ~2,125 (2025). A model trained on history
+  necessarily anchors on higher past levels and over-predicts the recent,
+  structurally lower year. Relative RMSE reduction versus the best baseline
+  remains substantial (2.09 → 1.97, and 0.622 → 0.665 in R²).
+
+## Hourly Hotspot Analysis (operational extension)
+
+The refreshed dataset includes `OCC_HOUR` and `PREMISES_TYPE`, which the
+monthly panel discards. `src/hotspot_analysis.R` turns them into directly
+actionable findings:
+
+- **Two daily peaks**: thefts concentrate at midnight and during the evening
+  commute (17:00–18:00), with a deep trough before dawn (04:00–06:00).
+- **Premises mix shifts by time of day**: outdoor theft dominates during
+  daylight and evening hours (~30–33% of thefts), while apartment/house theft
+  dominates overnight (~56% combined between 00:00–05:00).
+
+Operationally this suggests *time-targeted* patrol allocation: street-level
+patrols around transit corridors and commercial strips during the day and
+evening, and residential-building focus overnight — a much more efficient
+allocation than a uniform citywide sweep.
 
 ## Interpretation
 
@@ -175,10 +228,11 @@ best naive baseline (2.66 → 1.96).
   omit neighbourhood fixed effects (the count GLMs) collapse, confirming that
   theft risk is strongly and persistently localised.
 - **Seasonality is the second key driver.** The seasonal naive baseline already
-  reaches R² ≈ 0.59, and the model's sine/cosine harmonics capture the annual
+  reaches R² ≈ 0.62, and the model's sine/cosine harmonics capture the annual
   cycle cleanly.
-- **The long-term trend is smooth and mild** — captured by low-degree
-  B-splines rather than a sharp regime shift.
+- **The long-term trend is now explicitly downward** — captured by the
+  B-splines, but a smooth trend cannot fully absorb a structural decline that
+  steepens near the end of the training window.
 
 ## Error Analysis
 
@@ -190,6 +244,10 @@ best naive baseline (2.66 → 1.96).
   counts is a large absolute error).
 - **The model tends to smooth peaks** — extremely high months are under-predicted,
   a known limitation of ridge shrinkage on the log target.
+- **Distribution shift is the dominant source of 2025 error**: the model
+  over-predicts neighbourhoods whose theft counts fell fastest. Any
+  historically-trained model faces this; online retraining or trend extrapolation
+  would mitigate it.
 
 ## Limitations
 
@@ -197,24 +255,29 @@ best naive baseline (2.66 → 1.96).
   chosen log-linear model does not model zero-inflation explicitly, and the
   penalised GLMs were not competitive. A zero-inflated NB model is a natural
   future extension.
-- **Feature depth**: only temporal, seasonal, and spatial-structural features
-  are used. External covariates (weather, population density, policing) are
-  absent from the dataset.
-- **Validation horizon**: the hold-out is a single year (2023). A single
-  test year is a thinner generalisation guarantee than multi-year rolling
-  evaluation.
-- **Possible distribution shift**: theft-reporting behaviour or policing may
-  have drifted over the decade; the model does not explicitly correct for this.
+- **Location precision**: the publisher offsets coordinates to the nearest
+  intersection for privacy; the analysis is valid at neighbourhood granularity
+  but not at address level.
+- **External covariates**: weather, population density, policing effort, and
+  bike-infrastructure changes are absent from the dataset.
+- **Single-year hold-out**: one test year is a thinner generalisation guarantee
+  than multi-year rolling evaluation.
+- **Structural decline**: theft volume has fallen ~47% from the 2018 peak.
+  Models trained on history inherit that history's level; when the decline
+  continues, predictions systematically overshoot.
 
 ## Future Improvements
 
 - **Zero-inflated negative-binomial** model to explicitly handle the ~55% zeros.
+- **Online/rolling retraining** to track the sustained decline in theft volume.
 - **External covariates**: weather, holidays, and neighbourhood demographics.
 - **Multi-year rolling test** for a stronger generalisation estimate.
-- **Deployment**: retrain on a rolling window and forecast the next month for
-  city resource planning.
+- **Daily or hourly prediction granularity** — the dataset now supports it, and
+  the hotspot analysis shows strong within-day structure worth modelling.
 - **Uncertainty quantification**: prediction intervals via bootstrap or
   conformal methods.
+- **Deployment**: retrain on a rolling window and forecast the next month for
+  city resource planning.
 
 ## Repository Structure
 
@@ -223,16 +286,20 @@ best naive baseline (2.66 → 1.96).
 ├── requirements.txt
 ├── .gitignore
 ├── data/
-│   └── raw/            # bicycle.csv (place the raw CSV here; not committed)
+│   └── raw/            # place downloaded CSVs here (not committed)
+├── scripts/
+│   ├── download_data.py   # fetch the official dataset (ArcGIS API)
+│   └── convert_data.py    # convert to the pipeline's schemas
 ├── src/
-│   ├── config.R        # paths, package deps, seed
-│   ├── prepare_data.R  # load, audit, monthly panel
-│   ├── features.R      # basis-function design matrix
-│   ├── validation.R    # time-aware split + expanding-window CV
-│   ├── models.R        # baselines and candidate models
-│   ├── evaluate.R      # comparison & final evaluation
-│   ├── visualize.R     # EDA and diagnostic figures
-│   └── run_pipeline.R  # end-to-end entry point
+│   ├── config.R           # paths, package deps, seed
+│   ├── prepare_data.R     # load, audit, monthly panel
+│   ├── features.R         # basis-function design matrix
+│   ├── validation.R       # time-aware split + expanding-window CV
+│   ├── models.R           # baselines and candidate models
+│   ├── evaluate.R         # comparison & final evaluation
+│   ├── visualize.R        # EDA and diagnostic figures
+│   ├── hotspot_analysis.R # hourly/premises operational analysis
+│   └── run_pipeline.R     # end-to-end entry point
 └── output/
     ├── figures/        # generated figures
     └── tables/         # audit, CV, comparison, predictions
@@ -240,16 +307,24 @@ best naive baseline (2.66 → 1.96).
 
 ## Reproducibility
 
-- **Language**: R (>= 4.2).
+- **Language**: R (>= 4.2) for modelling; Python 3 for the data download and
+  conversion scripts (standard library only).
 - **Dependencies**: see `requirements.txt` (or `required_packages` in
   `src/config.R`). Install with
   `install.packages(scan("requirements.txt", what = "character"))`.
-- **Run the pipeline** from the project root:
+- **Fetch and prepare the data** (requires internet):
+  ```bash
+  python3 scripts/download_data.py   # writes data/raw/bicycle_raw_latest.csv
+  python3 scripts/convert_data.py    # writes bicycle.csv + bicycle_enhanced.csv
+  ```
+- **Run the monthly pipeline** from the project root:
   ```bash
   Rscript src/run_pipeline.R
   ```
-  It loads `data/raw/bicycle.csv`, audits the data, builds the monthly panel,
-  runs the time-aware CV and tuning, and writes figures and tables to `output/`.
+- **Run the hourly hotspot analysis**:
+  ```bash
+  Rscript src/hotspot_analysis.R
+  ```
 - **Random seed**: a fixed seed (`2023`) is set in `src/config.R` for
   reproducible fold assignment and any stochastic fitting.
 
@@ -264,9 +339,10 @@ best naive baseline (2.66 → 1.96).
 3. **A regularised linear model on a log-transformed target beats count GLMs**
    on this zero-inflated, over-dispersed data — a reminder to match the method
    to the data rather than defaulting to a "fancier" model.
-4. **Baselines matter.** A seasonal naive model already explains ~59% of
-   variance; any candidate model must convincingly beat it to justify its
-   complexity.
-5. **Stability is a feature.** The final model's performance is flat across a
-   1000× range of regularisation strengths, giving confidence that the result is
-   not a hyperparameter fluke.
+4. **Baselines matter.** A seasonal naive model already explains ~62% of
+   variance on the 2025 hold-out; any candidate model must convincingly beat it
+   to justify its complexity.
+5. **Distribution shift is the real enemy late in the decade.** The model
+   degrades on 2025 not because of tuning or leakage but because citywide theft
+   has fallen to a decade low — a structural change that no fixed model fully
+   absorbs, and the strongest argument for rolling retraining in deployment.

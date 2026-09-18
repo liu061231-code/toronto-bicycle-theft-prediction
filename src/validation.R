@@ -14,11 +14,18 @@
 # on data that precedes training.
 
 # Chronological split into train / validation / test by year.
+#
+# With the refreshed dataset (through 2025), the split is:
+#   train      = 2014-2023
+#   validation = 2024
+#   test       = 2025
+# The final test set is a full, untouched recent year; validation is used
+# only for the tuned model's hyperparameter selection via CV on train+val.
 split_panel <- function(panel) {
   list(
-    train = dplyr::filter(panel, year <= 2021),
-    validation = dplyr::filter(panel, year == 2022),
-    test = dplyr::filter(panel, year == 2023)
+    train = dplyr::filter(panel, year <= 2023),
+    validation = dplyr::filter(panel, year == 2024),
+    test = dplyr::filter(panel, year == 2025)
   )
 }
 

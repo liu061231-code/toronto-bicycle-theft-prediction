@@ -14,6 +14,8 @@
 #   - annual sine/cosine harmonics (seasonality)
 #   - radial basis functions over normalised coordinates (spatial structure)
 #   - one-hot neighbourhood indicators (neighbourhood fixed effects)
+#   - neighbourhood-level contextual features (historical share of outdoor /
+#     commercial thefts), learned from training data to avoid leakage
 #
 # `recipe` contains all scaling constants/centers learned from training.
 make_basis_recipe <- function(train) {
@@ -27,6 +29,20 @@ make_basis_recipe <- function(train) {
   # never assumes knowledge of future months. This keeps the basis stable
   # when a model is trained on an early window of an expanding CV fold.
   train_time <- range(train$time_index)
+
+  # Neighbourhood-level contextual priors: the historical (training-time)
+  # share of thefts that happen outdoors and in commercial premises. These
+  # are stable per-neighbourhood attributes, not per-month values, so they
+  # carry no target leakage and generalise to unseen months.
+  neighborhood_context <- train |>
+    dplyr::group_by(neighborhood) |>
+    dplyr::summarise(
+      outside_share = mean(outside_share),
+      commercial_share = mean(commercial_share),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(neighborhood)
+
   list(
     time_boundary = train_time,
     time_knots = as.numeric(stats::quantile(
@@ -37,7 +53,8 @@ make_basis_recipe <- function(train) {
     spatial_scale = max(stats::sd(train$lon), stats::sd(train$lat)),
     rbf_centers = unique_coordinates[center_index, c("lon", "lat")],
     rbf_sigma = 0.8,
-    neighborhood_levels = unique_coordinates$neighborhood
+    neighborhood_levels = unique_coordinates$neighborhood,
+    neighborhood_context = neighborhood_context
   )
 }
 
@@ -80,12 +97,21 @@ make_design_matrix <- function(data, recipe) {
       )
     )
   )
-  x <- cbind(time_basis, seasonal, rbf, neighborhood_basis)
+  # Join the neighbourhood-level contextual priors (outdoor / commercial
+  # theft shares) as fixed per-neighbourhood covariates.
+  context <- data |>
+    dplyr::select(neighborhood) |>
+    dplyr::left_join(recipe$neighborhood_context, by = "neighborhood") |>
+    dplyr::select(outside_share, commercial_share)
+  context_matrix <- as.matrix(context)
+
+  x <- cbind(time_basis, seasonal, rbf, neighborhood_basis, context_matrix)
   colnames(x) <- c(
     paste0("time_bs_", seq_len(ncol(time_basis))),
     colnames(seasonal),
     paste0("space_rbf_", seq_len(ncol(rbf))),
-    paste0("area_", seq_len(ncol(neighborhood_basis)))
+    paste0("area_", seq_len(ncol(neighborhood_basis))),
+    "context_outside_share", "context_commercial_share"
   )
   x
 }

@@ -32,6 +32,7 @@ project_paths <- function(root = find_project_root()) {
   list(
     root            = root,
     raw_data        = file.path(root, "data", "raw", "bicycle.csv"),
+    enhanced_data   = file.path(root, "data", "raw", "bicycle_enhanced.csv"),
     figure_dir      = file.path(root, "output", "figures"),
     table_dir       = file.path(root, "output", "tables"),
     model_dir       = file.path(root, "output", "models")
@@ -42,7 +43,7 @@ project_paths <- function(root = find_project_root()) {
 # set up in one place (see README "Reproducibility").
 required_packages <- c(
   "dplyr", "tidyr", "readr", "purrr", "tibble", "stringr", "forcats",
-  "lubridate", "ggplot2", "splines", "glmnet", "MASS", "mgcv"
+  "lubridate", "ggplot2", "scales", "splines", "glmnet", "MASS", "mgcv"
 )
 
 ensure_packages <- function(packages = required_packages) {
