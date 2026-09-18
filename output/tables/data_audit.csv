@@ -1,0 +1,10 @@
+metric,value
+rows,31833
+original_columns,8
+missing_cells,0
+exact_duplicate_rows,1475
+neighborhoods,140
+unique_dates,3483
+quarter_mismatch_rows,15751
+zero_or_negative_bike_cost,1623
+bike_cost_over_10000,59

@@ -1,0 +1,22 @@
+# R package dependencies for the Toronto bicycle theft prediction project.
+#
+# This project is written in R (>= 4.2). Install the required packages from
+# CRAN with:
+#
+#   install.packages(scan("requirements.txt", what = "character"))
+#
+# The list below mirrors `required_packages` in `src/config.R`.
+
+dplyr
+tidyr
+readr
+purrr
+tibble
+stringr
+forcats
+lubridate
+ggplot2
+splines
+glmnet
+MASS
+mgcv
