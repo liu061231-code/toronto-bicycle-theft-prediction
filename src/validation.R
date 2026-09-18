@@ -5,8 +5,8 @@
 # a clear annual cycle). A random train/test split would leak future
 # information into training, so all validation is chronological:
 #
-#   - final hold-out test set  = calendar year 2023
-#   - expanding-window CV      = hyperparameter selection on 2014-2022 only
+#   - final hold-out test set  = calendar year 2025
+#   - expanding-window CV      = hyperparameter selection on 2014-2024 only
 #
 # Expanding-window CV trains on all data up to a cutoff and evaluates on the
 # following window, then rolls the cutoff forward. This mirrors how the model
