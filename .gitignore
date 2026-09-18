@@ -52,6 +52,7 @@ scripts/*.sh
 # --- Raw data (large; see README "Dataset" for download instructions) ---
 data/raw/
 data/processed/
+data/raw_backup/
 
 # --- Legacy generated figures (superseded by the new pipeline) ---
 output/figures/03b_*.png

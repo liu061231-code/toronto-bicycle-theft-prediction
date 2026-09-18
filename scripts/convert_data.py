@@ -11,7 +11,7 @@ Output:
                                      division) for daily/hourly modelling
 """
 import csv
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from collections import Counter
 
 SRC = "data/raw/bicycle_raw_latest.csv"
@@ -36,7 +36,7 @@ def parse_date(s):
     try:
         # ArcGIS may return milliseconds since epoch.
         ms = int(s)
-        return datetime.utcfromtimestamp(ms / 1000).date()
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).date()
     except (ValueError, TypeError):
         pass
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
@@ -52,6 +52,8 @@ def main():
     legacy_rows = []
     enhanced_rows = []
     skipped = 0
+    object_ids = []
+    event_ids = []
 
     for r in rows:
         occ_date = parse_date(r.get("OCC_DATE"))
@@ -63,6 +65,9 @@ def main():
             skipped += 1
             continue
 
+        object_ids.append(r.get("OBJECTID"))
+        event_ids.append(r.get("EVENT_UNIQUE_ID"))
+
         neighborhood = (r.get("NEIGHBOURHOOD_140") or "").strip()
         lon = r.get("LONG_WGS84") or ""
         lat = r.get("LAT_WGS84") or ""
@@ -72,8 +77,11 @@ def main():
         division = (r.get("DIVISION") or "").strip()
         hour = r.get("OCC_HOUR") or ""
 
-        # Legacy row.
+        # Legacy row. Coordinates are kept raw; NSA rows carry 0/"" and are
+        # flagged downstream (see make_neighborhood_coordinates in R).
         legacy_rows.append({
+            "objectid": object_ids[-1],
+            "event_unique_id": event_ids[-1],
             "date": occ_date.isoformat(),
             "quarter": occ_date.isoformat(),  # placeholder; derived in R
             "day_of_week": occ_date.strftime("%A"),
@@ -86,6 +94,8 @@ def main():
 
         # Enhanced row (keeps the fine-grained signals).
         enhanced_rows.append({
+            "objectid": object_ids[-1],
+            "event_unique_id": event_ids[-1],
             "date": occ_date.isoformat(),
             "neighborhood": neighborhood,
             "long": lon,
@@ -105,18 +115,26 @@ def main():
             w.writerows(data)
 
     write(DST_LEGACY,
-          ["date", "quarter", "day_of_week", "neighborhood",
-           "bike_cost", "location", "long", "lat"],
+          ["objectid", "event_unique_id", "date", "quarter", "day_of_week",
+           "neighborhood", "bike_cost", "location", "long", "lat"],
           legacy_rows)
 
     write(DST_ENHANCED,
-          ["date", "neighborhood", "long", "lat", "bike_cost",
-           "premises_type", "location_type", "location", "division", "hour"],
+          ["objectid", "event_unique_id", "date", "neighborhood", "long",
+           "lat", "bike_cost", "premises_type", "location_type", "location",
+           "division", "hour"],
           enhanced_rows)
 
     print(f"rows processed : {len(rows)}")
     print(f"rows kept      : {len(legacy_rows)}")
     print(f"rows skipped   : {skipped} (pre-2014 or missing date)")
+
+    # Counting-calibre audit (see data_dictionary.md): rows != events.
+    non_null_oid = [o for o in object_ids if o not in (None, "")]
+    non_null_eid = [e for e in event_ids if e not in (None, "")]
+    print(f"distinct OBJECTID       : {len(set(non_null_oid))}")
+    print(f"distinct EVENT_UNIQUE_ID: {len(set(non_null_eid))}")
+
     print(f"legacy output  : {DST_LEGACY}")
     print(f"enhanced output: {DST_ENHANCED}")
 

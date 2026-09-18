@@ -46,6 +46,16 @@ required_packages <- c(
   "lubridate", "ggplot2", "scales", "splines", "glmnet", "MASS", "mgcv"
 )
 
+# Read package names from requirements.txt, correctly skipping comment lines
+# and blank lines. Using `comment.char = "#"` prevents the `scan()`-based
+# instruction in older READMEs from reading explanatory text as package names.
+read_requirements <- function(path = file.path(find_project_root(),
+                                               "requirements.txt")) {
+  pkgs <- scan(path, what = "character", comment.char = "#", quiet = TRUE)
+  pkgs <- pkgs[nzchar(pkgs)]
+  unique(pkgs)
+}
+
 ensure_packages <- function(packages = required_packages) {
   missing <- packages[!vapply(
     packages, requireNamespace, logical(1), quietly = TRUE
@@ -64,8 +74,14 @@ ensure_packages <- function(packages = required_packages) {
 # fold assignment, stochastic model fits).
 random_seed <- 2023L
 
-# Column names expected in the raw dataset (schema check).
+# Column names expected in the raw dataset (schema check). The two identifier
+# columns (`objectid`, `event_unique_id`) are optional for backward
+# compatibility with the legacy schema but are required for the counting
+# calibre documented in data_dictionary.md.
 raw_columns <- c(
   "date", "quarter", "day_of_week", "neighborhood",
   "bike_cost", "location", "long", "lat"
 )
+# Identifier columns added by the current convert_data.py. They are used for
+# the counting-calibre audit but are not modelling columns.
+id_columns <- c("objectid", "event_unique_id")

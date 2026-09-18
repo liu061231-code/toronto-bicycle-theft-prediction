@@ -8,3 +8,5 @@ unique_dates,4363
 quarter_mismatch_rows,0
 zero_or_negative_bike_cost,1925
 bike_cost_over_10000,67
+unknown_area_rows,370
+zero_coordinate_rows,359

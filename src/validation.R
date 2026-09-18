@@ -35,6 +35,12 @@ split_panel <- function(panel) {
 # window expands by `step_months` at each fold and evaluates on the next
 # `horizon_months`. Returns a list of folds, each with train/test month
 # indices (absolute time_index values).
+#
+# The fold schedule is expressed in *relative* month offsets from the start of
+# `data` (not absolute time_index values), so `initial_months` means "the first
+# N months of THIS series", regardless of whether the series starts at index 1
+# or 25. This fixes a bug where a series starting at time_index 25 would yield
+# a first fold with only 36 training months instead of 60.
 make_expanding_folds <- function(
     data,
     initial_months = 60L,
@@ -42,16 +48,23 @@ make_expanding_folds <- function(
     horizon_months = 12L) {
   min_index <- min(data$time_index)
   max_index <- max(data$time_index)
+  n_months <- max_index - min_index + 1L
+
+  # Guard against a series shorter than the initial window, which would make
+  # `seq()` emit "wrong sign in 'by' argument" and produce no folds.
+  if (n_months <= initial_months) {
+    return(list())
+  }
 
   fold_starts <- seq(
     initial_months + 1L,
-    max_index - horizon_months + 1L,
+    n_months - horizon_months + 1L,
     by = step_months
   )
-  folds <- lapply(fold_starts, function(start_index) {
-    train_end <- start_index - 1L
-    test_start <- start_index
-    test_end <- min(start_index + horizon_months - 1L, max_index)
+  folds <- lapply(fold_starts, function(start_offset) {
+    train_end <- min_index + start_offset - 2L
+    test_start <- min_index + start_offset - 1L
+    test_end <- min(test_start + horizon_months - 1L, max_index)
     list(
       train = seq(min_index, train_end),
       test = seq(test_start, test_end)

@@ -12,6 +12,13 @@
 # involved -- which are aggregated per (neighbourhood, month) and used as
 # extra predictors.
 
+# Sentinel value marking the "Not Specified Area" (NSA) pseudo-neighbourhood.
+# The publisher assigns ~370 records to NSA, whose coordinates are missing
+# (encoded as 0). NSA is NOT a real neighbourhood: it must never receive a
+# synthetic centroid or enter any spatial-distance / RBF computation, otherwise
+# a single (0,0) point dominates the spatial scale and collapses the map.
+UNKNOWN_AREA <- "NSA"
+
 # Read the raw CSV and validate its schema, then parse date columns.
 read_bicycle <- function(path) {
   x <- readr::read_csv(path, show_col_types = FALSE, na = c("", "NA"))
@@ -41,7 +48,8 @@ audit_bicycle <- function(raw) {
     metric = c(
       "rows", "original_columns", "missing_cells", "exact_duplicate_rows",
       "neighborhoods", "unique_dates", "quarter_mismatch_rows",
-      "zero_or_negative_bike_cost", "bike_cost_over_10000"
+      "zero_or_negative_bike_cost", "bike_cost_over_10000",
+      "unknown_area_rows", "zero_coordinate_rows"
     ),
     value = c(
       nrow(raw),
@@ -52,7 +60,13 @@ audit_bicycle <- function(raw) {
       dplyr::n_distinct(raw$date),
       sum(raw$derived_quarter != raw$supplied_quarter),
       sum(raw$bike_cost <= 0, na.rm = TRUE),
-      sum(raw$bike_cost > 10000, na.rm = TRUE)
+      sum(raw$bike_cost > 10000, na.rm = TRUE),
+      sum(raw$neighborhood == UNKNOWN_AREA, na.rm = TRUE),
+      sum(
+        (!is.na(raw$long) & raw$long == 0) |
+          (!is.na(raw$lat) & raw$lat == 0),
+        na.rm = TRUE
+      )
     )
   )
 }
@@ -63,6 +77,34 @@ audit_bicycle <- function(raw) {
 START_YEAR <- 2014L
 END_YEAR   <- 2025L
 
+# Neighbourhood centroid coordinates as *fixed geographic references*.
+#
+# These are the median coordinates of each neighbourhood's records across the
+# entire study period. They are treated as time-invariant geographic constants
+# (a neighbourhood's physical location does not change with the reporting
+# window), NOT as per-fold event statistics. Using a fixed centroid table
+# sidesteps two leakage hazards documented in handoff.md:
+#   1. computing centroids from the *full* series (incl. 2025/2026) and then
+#      splitting would move historical training features when future records
+#      arrive (99/141 areas differed in the audit);
+#   2. including NSA's (0,0) coordinate inflates the spatial scale ~65x.
+#
+# NSA is excluded entirely: it is assigned NA coordinates and never enters the
+# spatial design matrix. Only neighbourhoods with valid (non-zero) coordinates
+# participate in spatial modelling.
+make_neighborhood_coordinates <- function(raw) {
+  raw |>
+    dplyr::filter(.data$neighborhood != UNKNOWN_AREA) |>
+    dplyr::filter(!is.na(.data$long), !is.na(.data$lat),
+                  .data$long != 0, .data$lat != 0) |>
+    dplyr::group_by(.data$neighborhood) |>
+    dplyr::summarise(
+      lon = stats::median(.data$long),
+      lat = stats::median(.data$lat),
+      .groups = "drop"
+    )
+}
+
 # Aggregate raw incidents into a balanced monthly panel.
 #
 # The panel has one row per (neighbourhood, month) combination. Months with
@@ -70,18 +112,14 @@ END_YEAR   <- 2025L
 # number of monthly observations (2014-01 through 2025-12). Neighbourhood
 # centroid coordinates are attached for spatial modelling.
 #
+# NSA (unknown area) records are kept for count auditing but excluded from
+# spatial features; their coordinates are NA and they carry a flag.
+#
 # Contextual features aggregated per (neighbourhood, month):
 #   - outside_share     : proportion of thefts occurring outdoors
 #   - commercial_share  : proportion of thefts in commercial premises
-#   - n_divisions       : number of distinct police divisions affected
 make_monthly_panel <- function(raw) {
-  coordinates <- raw |>
-    dplyr::group_by(neighborhood) |>
-    dplyr::summarise(
-      lon = stats::median(long),
-      lat = stats::median(lat),
-      .groups = "drop"
-    )
+  coordinates <- make_neighborhood_coordinates(raw)
 
   months <- seq(
     as.Date(sprintf("%d-01-01", START_YEAR)),
@@ -119,7 +157,11 @@ make_monthly_panel <- function(raw) {
         (lubridate::year(month) - START_YEAR) * 12 + lubridate::month(month)
       ),
       month_of_year = lubridate::month(month),
-      year = lubridate::year(month)
+      year = lubridate::year(month),
+      # Flag unknown-area records; they carry NA coordinates and must never
+      # enter spatial (RBF) features. They remain in the panel so the total
+      # count reconciles against the raw data.
+      is_unknown = .data$neighborhood == UNKNOWN_AREA
     )
 
   list(panel = panel, coordinates = coordinates)

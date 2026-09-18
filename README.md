@@ -1,7 +1,7 @@
 # Toronto Bicycle Theft Prediction
 
 A spatio-temporal machine learning project that forecasts monthly bicycle theft
-counts across 141 Toronto neighbourhoods, combining spline-based temporal trend
+counts across Toronto neighbourhoods, combining spline-based temporal trend
 modelling, seasonal harmonics, and radial-basis-function spatial smoothing
 inside a regularised linear model — plus an hourly hotspot analysis that turns
 the same data into directly actionable patrol-planning insight.
@@ -10,10 +10,17 @@ the same data into directly actionable patrol-planning insight.
 
 This repository builds a predictive model for **monthly reported bicycle thefts
 per neighbourhood** in the City of Toronto over 2014–2025. The data are a
-balanced panel (141 neighbourhoods × 144 months) with strong temporal
+balanced panel (141 neighbourhood units × 144 months) with strong temporal
 autocorrelation, a pronounced annual cycle, and heavy over-dispersion in the
 count target. The goal is a model that generalises to *unseen future months*
 rather than one that merely fits the past.
+
+The panel has 140 named neighbourhoods plus one `NSA` ("Not Specified Area")
+bucket that the publisher uses for records with no known location. `NSA` is
+treated as an *unknown area*: it is retained for count reconciliation but
+excluded from all spatial features (its coordinates are missing/zero and would
+otherwise distort the spatial scale ~65×). See `data_dictionary.md` for the full
+counting and geography calibre.
 
 The project originated as a hands-on exercise in a spatio-temporal data science
 course, and has since been reworked into a standalone predictive-modelling
@@ -80,9 +87,12 @@ expects under `data/raw/`:
   neighbourhood has a complete 144-month series (balanced panel). The
   in-progress 2026 records are excluded so the panel stays balanced.
 - **Data-quality audit**: the pipeline reports missing cells, exact duplicate
-  rows, quarter-field inconsistencies, and implausible `bike_cost` values.
-- **Coordinates**: neighbourhood centroid is the median of incident
-  coordinates.
+  rows, quarter-field inconsistencies, implausible `bike_cost` values, and the
+  number of unknown-area (`NSA`) and zero-coordinate records.
+- **Coordinates**: neighbourhood centroid is the median of *valid* incident
+  coordinates, treated as a fixed geographic constant. Records in the `NSA`
+  unknown area (which carry zero/missing coordinates) are excluded from the
+  spatial basis so a synthetic `(0,0)` point cannot inflate the spatial scale.
 
 ## Exploratory Data Analysis
 
@@ -163,14 +173,18 @@ the mean across expanding-window folds (2014–2024).
 | Global mean | 2.48 | −0.005 | 2.12 | 3.49 | −0.051 |
 | Neighbourhood mean | 1.55 | 0.570 | 1.30 | 2.52 | 0.449 |
 | Seasonal naive | 1.46 | 0.605 | 1.08 | 2.09 | 0.622 |
-| Poisson GLM | 3.28 | −0.559 | 1.40 | 3.38 | 0.014 |
-| Negative-binomial GLM | 3.77 | −3.62 | 1.13 | 3.10 | 0.168 |
-| Basis OLS (log) | 1.39 | 0.615 | 0.839 | 2.01 | 0.652 |
+| Poisson GLM | 2.72 | −1.43 | 1.06 | 2.67 | 0.382 |
+| Negative-binomial GLM | 3.82 | −5.08 | 1.06 | 2.83 | 0.307 |
+| Basis OLS (log) | 1.39 | 0.609 | 0.838 | 2.00 | 0.653 |
 | Basis Ridge (log) | 1.37 | 0.618 | 0.835 | 1.99 | 0.659 |
-| **Basis Ridge (tuned)** | **1.34** | **0.623** | **0.833** | **1.97** | **0.665** |
+| **Basis Ridge (tuned)** | **1.34** | **0.623** | **0.832** | **1.96** | **0.667** |
 
 Ablation: removing the two neighbourhood context features costs ~0.013 R²
-(0.665 → 0.652) — a small but consistent gain, at zero leakage risk.
+(0.667 → 0.652) — a small but consistent gain, at zero leakage risk. Note that
+the spatial RBF and context features are constant within a neighbourhood and
+thus lie in the span of the one-hot indicators; their measured gain may partly
+reflect the effective change in ridge regularisation rather than an independent,
+identifiable driver (see Limitations).
 
 ## Final Model
 
@@ -192,18 +206,19 @@ driven by score alone:
 On the untouched 2025 test year, the final model achieves:
 
 - **MAE** = 0.83 thefts per neighbourhood-month
-- **RMSE** = 1.97 thefts
-- **R²** = 0.665
+- **RMSE** = 1.96 thefts
+- **R²** = 0.667
 
 For context, on the earlier (easier) 2023 test year the same modelling
 framework reaches R² ≈ 0.79. The lower score on 2025 is not a regression —
 it reflects a genuinely harder target:
 
 - **The 2025 test year sits at the bottom of a sustained decline.** Citywide
-  theft fell from ~3,990 (2018) to ~2,125 (2025). A model trained on history
-  necessarily anchors on higher past levels and over-predicts the recent,
-  structurally lower year. Relative RMSE reduction versus the best baseline
-  remains substantial (2.09 → 1.97, and 0.622 → 0.665 in R²).
+  theft fell from ~3,990 (2018) to ~2,125 (2025). The model's 2025 predictions
+  total ~1,371, i.e. **~35% *below* the observed total** (only January and
+  February are over-predicted; the remaining ten months are under-predicted).
+  This is a systematic *under*-prediction, not an over-prediction — and it is
+  not yet a settled causal conclusion (see Error Analysis).
 
 ## Hourly Hotspot Analysis (operational extension)
 
@@ -238,16 +253,26 @@ allocation than a uniform citywide sweep.
 
 - **Residuals are approximately centred** near zero, indicating low systematic
   bias on average.
-- **Largest errors occur at high-count cells**: because the target is a skewed
-  count, the model's absolute error grows with the magnitude of the true count
-  (a hallmark of modelling the log-scale, where a multiplicative error on large
-  counts is a large absolute error).
+- **The 2025 citywide total is under-predicted by ~35%** (predicted ~1,371 vs
+  observed ~2,125). The under-prediction is concentrated in March–December;
+  January and February are over-predicted. This month-level pattern means
+  "distribution shift" is a *candidate* explanation, not a settled causal
+  attribution.
+- **Largest absolute errors occur at high-count cells**: because the target is
+  a skewed count, the model's absolute error grows with the magnitude of the
+  true count (a hallmark of modelling the log-scale, where a multiplicative
+  error on large counts is a large absolute error).
+- **A candidate cause of the under-prediction is the back-transform bias**:
+  the model fits `log1p(Y)` and predicts `expm1(E[log1p(Y)|X])`, which is not
+  equal to the conditional count mean `E[Y|X]` (Jensen's inequality). This is
+  listed as a hypothesis to verify, not a confirmed explanation.
 - **The model tends to smooth peaks** — extremely high months are under-predicted,
   a known limitation of ridge shrinkage on the log target.
-- **Distribution shift is the dominant source of 2025 error**: the model
-  over-predicts neighbourhoods whose theft counts fell fastest. Any
-  historically-trained model faces this; online retraining or trend extrapolation
-  would mitigate it.
+
+*Calibration note*: any calibration parameter (e.g. a multiplicative correction
+to fix the citywide total) must be learned from training data or a time-ordered
+hold-out only, never fitted on the 2025 totals and then evaluated on the same
+year.
 
 ## Limitations
 
@@ -263,8 +288,10 @@ allocation than a uniform citywide sweep.
 - **Single-year hold-out**: one test year is a thinner generalisation guarantee
   than multi-year rolling evaluation.
 - **Structural decline**: theft volume has fallen ~47% from the 2018 peak.
-  Models trained on history inherit that history's level; when the decline
-  continues, predictions systematically overshoot.
+  Models trained on history inherit that history's level; on 2025 the model
+  *under*-predicts the total by ~35%, and the precise cause (distribution
+  shift vs. log-transform back-bias vs. calendar effects) is still under
+  investigation rather than asserted.
 
 ## Future Improvements
 
@@ -283,6 +310,7 @@ allocation than a uniform citywide sweep.
 
 ```
 ├── README.md
+├── data_dictionary.md   # counting / time / geography / duplication calibre
 ├── requirements.txt
 ├── .gitignore
 ├── data/
@@ -300,6 +328,12 @@ allocation than a uniform citywide sweep.
 │   ├── visualize.R        # EDA and diagnostic figures
 │   ├── hotspot_analysis.R # hourly/premises operational analysis
 │   └── run_pipeline.R     # end-to-end entry point
+├── test/
+│   ├── test_helper.R      # synthetic-data builders
+│   ├── test-data-quality.R  # NSA / coordinate / panel tests
+│   ├── test-leakage.R       # future-perturbation invariance
+│   ├── test-validation.R    # expanding-window fold tests
+│   └── test_scripts.py      # download/convert error-handling tests
 └── output/
     ├── figures/        # generated figures
     └── tables/         # audit, CV, comparison, predictions
@@ -310,8 +344,15 @@ allocation than a uniform citywide sweep.
 - **Language**: R (>= 4.2) for modelling; Python 3 for the data download and
   conversion scripts (standard library only).
 - **Dependencies**: see `requirements.txt` (or `required_packages` in
-  `src/config.R`). Install with
-  `install.packages(scan("requirements.txt", what = "character"))`.
+  `src/config.R`). Install from R with
+  `install.packages(read_requirements())` (after
+  `source("src/config.R")`), or directly:
+  `install.packages(scan("requirements.txt", what = "character", comment.char = "#"))`.
+- **Tests**: run the full suite from the project root:
+  ```bash
+  Rscript test/run_tests.R                 # R data/leakage/validation tests
+  python3 test/test_scripts.py             # download/convert error-handling tests
+  ```
 - **Fetch and prepare the data** (requires internet):
   ```bash
   python3 scripts/download_data.py   # writes data/raw/bicycle_raw_latest.csv

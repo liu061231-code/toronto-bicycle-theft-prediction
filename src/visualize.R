@@ -63,8 +63,11 @@ plot_seasonality <- function(panel) {
 }
 
 # EDA: spatial distribution of long-run mean monthly thefts.
+# Unknown-area (NSA) rows have NA coordinates and are excluded so the map is
+# not distorted by a single (0,0) point.
 plot_spatial_hotspots <- function(panel) {
   hotspots <- panel |>
+    dplyr::filter(!is.na(.data$lon), !is.na(.data$lat)) |>
     dplyr::group_by(neighborhood, lon, lat) |>
     dplyr::summarise(mean_monthly = mean(theft_count), .groups = "drop")
   ggplot2::ggplot(
