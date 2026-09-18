@@ -33,10 +33,26 @@ project_paths <- function(root = find_project_root()) {
     root            = root,
     raw_data        = file.path(root, "data", "raw", "bicycle.csv"),
     enhanced_data   = file.path(root, "data", "raw", "bicycle_enhanced.csv"),
+    reference_coordinates = file.path(
+      root, "data", "reference", "neighborhood_coordinates.csv"
+    ),
     figure_dir      = file.path(root, "output", "figures"),
     table_dir       = file.path(root, "output", "tables"),
     model_dir       = file.path(root, "output", "models")
   )
+}
+
+# Content hash of a file, used for data versioning and artifact provenance.
+# Prefers SHA-256 (via the digest package) and falls back to MD5 (base R,
+# via tools::md5sum) when digest is unavailable. The returned string is
+# prefixed with the algorithm name so hashes are self-describing.
+digest_file <- function(path) {
+  if (requireNamespace("digest", quietly = TRUE)) {
+    h <- digest::digest(file = path, algo = "sha256")
+    return(paste0("sha256:", h))
+  }
+  h <- unname(tools::md5sum(path))
+  paste0("md5:", h)
 }
 
 # Declare all R packages used by the project so a fresh environment can be

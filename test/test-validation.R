@@ -62,7 +62,9 @@ test_that("folds never let test precede train (chronological integrity)", {
 
 test_that("split_panel produces non-overlapping chronological splits", {
   raw <- make_synthetic_raw(n_neighborhoods = 3, n_years = 5, with_nsa = TRUE)
-  panel <- make_monthly_panel(raw)$panel
+  panel <- make_monthly_panel(
+    raw, coordinates = make_neighborhood_coordinates(raw)
+  )$panel
   splits <- split_panel(panel)
   expect_true(all(splits$train$year <= 2023))
   expect_true(all(splits$validation$year == 2024))

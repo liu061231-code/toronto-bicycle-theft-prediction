@@ -77,21 +77,18 @@ audit_bicycle <- function(raw) {
 START_YEAR <- 2014L
 END_YEAR   <- 2025L
 
-# Neighbourhood centroid coordinates as *fixed geographic references*.
+# Median event coordinates per neighbourhood.
 #
-# These are the median coordinates of each neighbourhood's records across the
-# entire study period. They are treated as time-invariant geographic constants
-# (a neighbourhood's physical location does not change with the reporting
-# window), NOT as per-fold event statistics. Using a fixed centroid table
-# sidesteps two leakage hazards documented in handoff.md:
-#   1. computing centroids from the *full* series (incl. 2025/2026) and then
-#      splitting would move historical training features when future records
-#      arrive (99/141 areas differed in the audit);
-#   2. including NSA's (0,0) coordinate inflates the spatial scale ~65x.
+# SCOPE: this helper exists ONLY to build the frozen reference table
+# (scripts/build_reference_coordinates.R) and to construct test fixtures.
+# The main pipeline must NEVER call it on the full raw series: doing so lets
+# post-cutoff (future) events move historical training features. In
+# production, coordinates come from the versioned file
+# data/reference/neighborhood_coordinates.csv via load_reference_coordinates().
 #
-# NSA is excluded entirely: it is assigned NA coordinates and never enters the
-# spatial design matrix. Only neighbourhoods with valid (non-zero) coordinates
-# participate in spatial modelling.
+# NSA is excluded entirely: it receives NA coordinates and never enters the
+# spatial design matrix. Only neighbourhoods with valid (non-zero)
+# coordinates participate in spatial modelling.
 make_neighborhood_coordinates <- function(raw) {
   raw |>
     dplyr::filter(.data$neighborhood != UNKNOWN_AREA) |>
@@ -105,12 +102,51 @@ make_neighborhood_coordinates <- function(raw) {
     )
 }
 
+# Load the frozen, versioned neighbourhood coordinate reference table.
+#
+# The table (data/reference/neighborhood_coordinates.csv) is built ONCE from
+# a fixed historical training period by scripts/build_reference_coordinates.R
+# and committed to the repository. It is a TRAINING-PERIOD ESTIMATE of each
+# neighbourhood's location, not an official geographic constant; see the
+# builder script and data_dictionary.md for provenance. The pipeline reads
+# this file blindly so that future raw events can never move historical
+# features.
+load_reference_coordinates <- function(
+    path = project_paths()$reference_coordinates) {
+  if (!file.exists(path)) {
+    stop(
+      "Coordinate reference table not found: ", path, "\n",
+      "Build it once with: Rscript scripts/build_reference_coordinates.R"
+    )
+  }
+  ref <- readr::read_csv(path, show_col_types = FALSE, na = c("", "NA"))
+  required <- c("neighborhood", "lon", "lat")
+  if (!all(required %in% names(ref))) {
+    stop(
+      "Reference table ", path, " is missing columns: ",
+      paste(setdiff(required, names(ref)), collapse = ", ")
+    )
+  }
+  if (anyDuplicated(ref$neighborhood)) {
+    stop("Reference table has duplicated neighbourhood keys: ", path)
+  }
+  dplyr::select(ref, neighborhood, lon, lat)
+}
+
 # Aggregate raw incidents into a balanced monthly panel.
 #
 # The panel has one row per (neighbourhood, month) combination. Months with
 # no recorded thefts are filled with 0 so every neighbourhood has the same
-# number of monthly observations (2014-01 through 2025-12). Neighbourhood
-# centroid coordinates are attached for spatial modelling.
+# number of monthly observations (2014-01 through 2025-12).
+#
+# COORDINATES (feedback2.0 P0 Task 1): spatial coordinates come from the
+# frozen, versioned reference table, NEVER from the raw events passed here.
+# `coordinates` may be:
+#   - NULL (default): load data/reference/neighborhood_coordinates.csv
+#   - a data frame with columns neighborhood/lon/lat (used by tests and by
+#     the reference-table builder)
+# This guarantees that perturbing or appending post-cutoff raw events cannot
+# change any historical panel row.
 #
 # NSA (unknown area) records are kept for count auditing but excluded from
 # spatial features; their coordinates are NA and they carry a flag.
@@ -118,8 +154,10 @@ make_neighborhood_coordinates <- function(raw) {
 # Contextual features aggregated per (neighbourhood, month):
 #   - outside_share     : proportion of thefts occurring outdoors
 #   - commercial_share  : proportion of thefts in commercial premises
-make_monthly_panel <- function(raw) {
-  coordinates <- make_neighborhood_coordinates(raw)
+make_monthly_panel <- function(raw, coordinates = NULL) {
+  if (is.null(coordinates)) {
+    coordinates <- load_reference_coordinates()
+  }
 
   months <- seq(
     as.Date(sprintf("%d-01-01", START_YEAR)),
@@ -163,6 +201,20 @@ make_monthly_panel <- function(raw) {
       # count reconciles against the raw data.
       is_unknown = .data$neighborhood == UNKNOWN_AREA
     )
+
+  # Non-NSA neighbourhoods missing from the reference table degrade silently
+  # to "spatially unknown"; surface that loudly instead.
+  missing_ref <- panel |>
+    dplyr::filter(!is_unknown, is.na(lon) | is.na(lat)) |>
+    dplyr::distinct(neighborhood) |>
+    dplyr::pull(neighborhood)
+  if (length(missing_ref) > 0) {
+    warning(
+      length(missing_ref), " neighbourhood(s) missing from the coordinate ",
+      "reference table; they receive NA spatial coordinates: ",
+      paste(missing_ref, collapse = ", ")
+    )
+  }
 
   list(panel = panel, coordinates = coordinates)
 }
