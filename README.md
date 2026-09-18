@@ -2,9 +2,9 @@
 
 A spatio-temporal machine learning project that forecasts monthly bicycle theft
 counts across Toronto neighbourhoods, combining spline-based temporal trend
-modelling, seasonal harmonics, and radial-basis-function spatial smoothing
-inside a regularised linear model — plus an hourly hotspot analysis that turns
-the same data into directly actionable patrol-planning insight.
+modelling, seasonal harmonics, and radial-basis-function spatial smoothing —
+plus a descriptive hourly hotspot analysis that explores when and where thefts
+concentrate within the day.
 
 ## Overview
 
@@ -25,20 +25,19 @@ counting and geography calibre.
 The project originated as a hands-on exercise in a spatio-temporal data science
 course, and has since been reworked into a standalone predictive-modelling
 project: a rigorous time-aware validation strategy, fair baseline and
-multi-model comparison, hyperparameter tuning, and interpretable diagnostics.
-The dataset was subsequently refreshed from the official open-data source
-(40,583 incident records, now spanning 2014–2026), which extended the study
-period through 2025 and unlocked two new signal fields — **hour of day** and
-**premises type** — used in the operational hotspot analysis.
+multi-model comparison, nested chronological hyperparameter tuning, and
+interpretable diagnostics. The dataset was subsequently refreshed from the
+official open-data source (40,583 incident records, now spanning 2014–2026),
+which extended the study period through 2025 and unlocked two new signal
+fields — **hour of day** and **premises type** — used in the hotspot analysis.
 
-The final model is a **ridge-penalised Poisson regression** on a hand-crafted
-design matrix (temporal B-splines + seasonal harmonics + spatial radial basis
-functions + neighbourhood fixed effects). It reaches an out-of-sample R² of
-**0.74** on the held-out 2025 test year, and its log link predicts the
-conditional count mean directly, avoiding the `log1p` back-transform bias that
-makes the earlier ridge-on-log model under-predict the citywide total. The
-project also retains the ridge-on-log model (R² 0.67) as a strong, interpretable
-baseline; the two are compared fairly in the model-comparison section.
+Model selection is driven by **predeclared rolling-origin backtests** over two
+separate forecast tasks — horizon 1 (predict next month) and horizon 12
+(predict next year) — not by any single held-out year. Under that protocol the
+two tasks select different models: the ridge-penalised Poisson regression wins
+the monthly-updating task, while the ridge-on-log model wins the annual-ahead
+task (see Model Comparison). Calendar 2025 is kept as a repeatedly-viewed
+*retrospective* window and plays no role in selection.
 
 ## Problem Definition
 
@@ -91,10 +90,15 @@ expects under `data/raw/`:
 - **Data-quality audit**: the pipeline reports missing cells, exact duplicate
   rows, quarter-field inconsistencies, implausible `bike_cost` values, and the
   number of unknown-area (`NSA`) and zero-coordinate records.
-- **Coordinates**: neighbourhood centroid is the median of *valid* incident
-  coordinates, treated as a fixed geographic constant. Records in the `NSA`
-  unknown area (which carry zero/missing coordinates) are excluded from the
-  spatial basis so a synthetic `(0,0)` point cannot inflate the spatial scale.
+- **Coordinates**: neighbourhood centroids come from a **frozen reference
+  table** (`data/reference/neighborhood_coordinates.csv`), built once from the
+  2014–2023 training window as the median of *valid* incident coordinates per
+  neighbourhood and treated as a fixed geographic constant thereafter. This
+  removes a subtle leakage channel: recomputing centroids from the full raw
+  file would let future incidents move the spatial features of past training
+  months. Records in the `NSA` unknown area (which carry zero/missing
+  coordinates) are excluded from the spatial basis so a synthetic `(0,0)`
+  point cannot inflate the spatial scale.
 
 ## Exploratory Data Analysis
 
@@ -121,20 +125,43 @@ This is the most important design decision in the project.
 The panel has **temporal dependence** (high autocorrelation and annual
 periodicity) and **spatial dependence** (persistent neighbourhood-level
 differences). A random `train_test_split` would leak future observations into
-training and inflate scores, so the project uses a purely chronological scheme:
+training and inflate scores, so the project uses a purely chronological scheme.
 
-- **Hold-out test set**: calendar year **2025** (never touched until final
-  evaluation).
-- **Expanding-window cross-validation** on 2014–2024 for model selection and
-  hyperparameter tuning: train on all data up to a cutoff, evaluate on the
-  following 12-month window, then roll the cutoff forward. This mirrors how the
-  model would be deployed — forecast the future from the past — and never
-  evaluates on data preceding the training window.
+**Two separate forecast tasks** are evaluated, and never merged into one
+conclusion:
 
-Crucially, the spline boundary knots, spatial centres, and neighbourhood
-context features are **re-fit on each fold's training data only**, so early
-folds do not silently assume knowledge of the full timeline (which would
-otherwise cause explosive extrapolation and leakage).
+- **Horizon 1 (monthly updating)** — each origin refits on all prior months
+  and predicts the next month. Twelve monthly rolling origins cover calendar
+  2024 (the last year of the training span), sampling every season.
+- **Horizon 12 (annual planning)** — each origin refits on all prior months
+  and predicts the next 12 months at once. Six expanding annual origins cover
+  2019–2024.
+
+**Hyperparameter tuning is nested and chronological**: for every outer origin,
+each tuned model's λ is selected by expanding-window *inner* folds inside that
+origin's training window only (same 14-point λ grid for every tuned model,
+RMSE primary metric, tie-break = strongest regularisation within 1% of the best
+RMSE). No random K-fold is used anywhere; the full per-origin tuning trail is
+saved to `output/tables/tuning_traces.csv`.
+
+**Model-selection rule (predeclared)**:
+
+> Primary metric: mean outer-fold RMSE, per horizon.
+> Tie-break: lower mean MAE when mean RMSE differs by less than 1%.
+> Selection is made per horizon; if the horizons disagree, both selections are
+> reported — no global champion is forced.
+> 2025 retrospective scores are descriptive and do not change selection.
+
+**Retrospective window**: calendar year **2025** is held out from all training
+and tuning. It has, however, been *viewed repeatedly* across earlier diagnostic
+rounds of this project, so its scores are reported as descriptive retrospective
+evidence only — never as a "never touched" estimate and never as an input to
+selection.
+
+Crucially, the spline boundary knots, spatial centres, neighbourhood context
+features, and all λ choices are **re-fit on each fold's training data only**,
+so early folds do not silently assume knowledge of the full timeline (which
+would otherwise cause explosive extrapolation and leakage).
 
 ## Baseline Models
 
@@ -154,15 +181,19 @@ mean (test R² 0.581).
 
 ## Models
 
-Candidate models, all evaluated under the same expanding-window CV and the same
-held-out test set:
+Candidate models, all evaluated under the same rolling-origin backtests and
+the same nested chronological tuning protocol:
 
 - **Basis OLS (log)** — ordinary least squares on `log1p(theft_count)`.
-- **Basis Ridge (log)** — ridge-regularised least squares on `log1p(theft_count)`.
+- **Basis Ridge (tuned)** — ridge-regularised least squares on
+  `log1p(theft_count)`; λ tuned per outer origin.
 - **Poisson (compact)** — penalised Poisson regression (log link) on the compact
   basis (time + seasonality + spatial RBF, no neighbourhood one-hot).
-- **Poisson (area, ridge)** — penalised Poisson with the full basis including
-  the neighbourhood one-hot block, λ selected per fold via `cv.glmnet`.
+- **Poisson (area, tuned)** — penalised Poisson with the full basis including
+  the neighbourhood one-hot block; λ tuned per outer origin through the same
+  grid, inner folds, metric and tie-break as the ridge model. A candidate
+  count-mean model with a log link; it does **not** by itself resolve
+  zero-inflation, and standard Poisson does not model over-dispersion.
 - **Negative-binomial** — NB regression (`MASS::glm.nb`) on the compact basis to
   absorb over-dispersion.
 
@@ -173,72 +204,56 @@ neighbourhood one-hot indicators, and two neighbourhood-level context features
 
 ## Model Comparison
 
-All metrics are on the **2025 hold-out test set** unless noted; CV columns are
-the mean across expanding-window folds (2014–2024).
+Selection follows the predeclared rule (mean outer-fold RMSE per horizon;
+tie-break mean MAE within 1%). Full per-fold results:
+`output/tables/backtest_folds.csv`; summaries: `backtest_summary.csv`.
 
-| Model | CV MAE | CV R² | Test MAE | Test RMSE | Test R² |
-|---|---|---|---|---|---|
-| Global mean | 2.48 | −0.005 | 2.12 | 3.49 | −0.051 |
-| Neighbourhood mean | 1.55 | 0.570 | 1.30 | 2.52 | 0.449 |
-| Recent 12-mo mean | 1.53 | 0.569 | 1.13 | 2.20 | 0.581 |
-| Seasonal naive | 1.46 | 0.605 | 1.08 | 2.09 | 0.622 |
-| Poisson (compact) | 1.94 | 0.246 | 1.16 | 2.72 | 0.360 |
-| Negative-binomial | 3.82 | −5.08 | 1.06 | 2.83 | 0.307 |
-| Basis OLS (log) | 1.39 | 0.609 | 0.838 | 2.00 | 0.653 |
-| Basis Ridge (log) | 1.37 | 0.618 | 0.835 | 1.99 | 0.659 |
-| Basis Ridge (tuned) | 1.34 | 0.623 | 0.832 | 1.96 | 0.667 |
-| **Poisson (area, ridge)** | **1.55** | **0.411** | **0.846** | **1.73** | **0.741** |
+**Horizon 1 — monthly updating** (12 rolling origins over 2024):
+
+| Model | mean MAE | mean RMSE (±sd) | mean R² | mean total bias | worst-fold RMSE |
+|---|---:|---:|---:|---:|---:|
+| **Poisson (area, tuned)** ✓ selected | **1.01** | **1.56 ± 0.50** | **0.745** | **+17.0%** | 2.36 |
+| Basis Ridge (tuned) | 0.905 | 1.61 ± 0.57 | 0.738 | −4.0% | 2.87 |
+| Basis OLS (log) | 0.906 | 1.61 ± 0.56 | 0.734 | −3.6% | 2.83 |
+| Recent 12-mo mean | 1.11 | 2.07 ± 0.57 | 0.241 | +40.0% | 3.22 |
+| Neighbourhood mean | 1.25 | 2.20 ± 0.58 | −0.036 | +64.4% | 3.28 |
+| Seasonal naive | 1.23 | 2.31 ± 0.81 | 0.447 | +8.0% | 3.42 |
+| Poisson (compact) | 1.41 | 2.49 ± 0.98 | 0.455 | +8.1% | 4.08 |
+| Negative-binomial | 1.47 | 2.64 ± 1.16 | 0.383 | +8.1% | 4.47 |
+| Global mean | 2.17 | 3.57 ± 1.19 | −0.196 | +64.4% | 5.92 |
+
+**Horizon 12 — annual planning** (6 expanding annual origins, 2019–2024):
+
+| Model | mean MAE | mean RMSE (±sd) | mean R² | mean total bias | worst-fold RMSE |
+|---|---:|---:|---:|---:|---:|
+| **Basis Ridge (tuned)** ✓ selected | **1.38** | **2.93 ± 0.80** | **0.613** | **−5.9%** | 3.85 |
+| Seasonal naive | 1.46 | 2.93 ± 0.36 | 0.605 | +6.9% | 3.44 |
+| Basis OLS (log) | 1.39 | 2.94 ± 0.78 | 0.609 | −4.6% | 3.84 |
+| Neighbourhood mean | 1.55 | 3.10 ± 0.55 | 0.570 | +12.4% | 3.81 |
+| Recent 12-mo mean | 1.53 | 3.10 ± 0.59 | 0.569 | +6.9% | 3.85 |
+| Poisson (area, tuned) | 1.64 | 3.65 ± 2.27 | 0.271 | +11.1% | 7.87 |
+| Global mean | 2.48 | 4.72 ± 0.68 | −0.005 | +12.4% | 5.82 |
+| Poisson (compact) | 2.72 | 5.92 ± 5.14 | −1.44 | +58.8% | 16.4 |
+| Negative-binomial | 3.82 | 8.90 ± 8.36 | −5.11 | +115.5% | 25.6 |
+
+Reading of the two tables:
+
+- **Horizon 1 selects the penalised Poisson** (RMSE 1.56 vs ridge 1.61, a 3.2%
+  margin, above the 1% tie-break band). Monthly refitting lets its conditional-
+  mean count link track the level closely.
+- **Horizon 12 selects the tuned ridge-on-log**, via the tie-break over the
+  seasonal naive baseline (equal mean RMSE 2.93, lower mean MAE 1.38 vs 1.46).
+  On the annual task the ridge is far more stable fold-to-fold (sd 0.80 vs
+  Poisson's 2.27; worst fold 3.85 vs 7.87).
+- The two horizons therefore name **different** models; both are reported.
 
 **Fairness note**: the count GLMs (`Poisson (compact)`, `Negative-binomial`)
-are fitted on the compact feature set (time + seasonality + spatial RBF, *no*
+use the compact feature set (time + seasonality + spatial RBF, *no*
 neighbourhood one-hot) because unpenalised MLE cannot handle the rank-deficient
 one-hot block — `glmnet` 5.0 also has no negative-binomial family, so NB uses
-`MASS::glm.nb` and cannot be penalised. `Poisson (area, ridge)` closes that gap
-by adding the one-hot block *with a ridge penalty* and selecting λ per fold via
-`cv.glmnet`, giving the count model the same spatial structure and a comparable
-tuning budget as the ridge baseline. Under this fair comparison the penalised
-Poisson is the strongest model on the 2025 hold-out (test R² 0.741 vs 0.667),
-chiefly because its log link predicts the conditional mean `E[Y]` directly and
-avoids the log1p back-transform bias (see Error Analysis).
-
-## Final Model
-
-The **Poisson (area, ridge)** model is selected as final. The choice follows
-from the fair comparison above rather than from score alone:
-
-- **Generalisation**: it achieves the best held-out RMSE, MAE, and R² on 2025.
-- **Calibration**: its log link predicts the conditional count mean `E[Y]`
-  directly, avoiding the `log1p` back-transform bias that makes the ridge-on-log
-  model under-predict the citywide total by ~35%; Poisson's total is within
-  ~14% of the observed total.
-- **Appropriate distribution**: a count link is the natural fit for a heavily
-  zero-inflated, over-dispersed non-negative target, and with a ridge penalty
-  it is no longer disadvantaged by the rank-deficient one-hot block.
-- **Fair tuning**: λ is selected per fold by `cv.glmnet` on training data only,
-  giving it the same tuning budget as the ridge model's grid search.
-
-**Honesty caveat**: the 2025 test year has been used across multiple diagnostic
-rounds, so the 0.741 figure is not a clean, never-touched estimate. It should be
-confirmed with a horizon-1 rolling backtest (or a genuinely unseen future
-window) before being quoted as a deployment-grade result. The CV columns in the
-comparison table still favour ridge (cv R² 0.623 vs 0.411), which reflects a
-different, horizon-12 task; reconciling the two is pending work (see Future
-Improvements).
-
-## Results
-
-On the 2025 test year, the two leading models achieve:
-
-| Model | MAE | RMSE | R² | Total bias |
-|---|---:|---:|---:|---:|
-| **Poisson (area, ridge)** | **0.846** | **1.73** | **0.741** | **−13.6%** |
-| Basis Ridge (tuned) | 0.832 | 1.96 | 0.667 | −35.1% |
-
-For context, on the earlier (easier) 2023 test year the ridge framework reaches
-R² ≈ 0.79. The 2025 year is harder because citywide theft has fallen to a
-decade low (~2,125 vs a 2018 peak of ~3,990), and — as the error analysis now
-shows — a large part of the ridge model's shortfall is the log1p back-transform
-bias rather than genuine distribution shift alone.
+`MASS::glm.nb` and cannot be penalised. `Poisson (area, tuned)` closes that gap
+with the one-hot block *plus a ridge penalty*, tuned under the identical
+protocol as the ridge model (same grid, inner folds, metric, tie-break).
 
 ## Hourly Hotspot Analysis (operational extension)
 
@@ -261,7 +276,7 @@ allocation than a uniform citywide sweep.
 
 - **Neighbourhood identity is the single most informative signal.** Models that
   omit neighbourhood fixed effects (`Poisson (compact)`, `Negative-binomial`)
-  collapse (test R² 0.36 / 0.31), confirming that theft risk is strongly and
+  collapse (2025 retrospective R² 0.38 / 0.31), confirming that theft risk is strongly and
   persistently localised — this holds for count models too, not just linear ones.
 - **Seasonality is the second key driver.** The seasonal naive baseline already
   reaches R² ≈ 0.62, and the model's sine/cosine harmonics capture the annual
@@ -272,25 +287,39 @@ allocation than a uniform citywide sweep.
 
 ## Error Analysis
 
-- **The log1p back-transform bias is the dominant, structural cause of the
-  ridge model's under-prediction.** The ridge model fits `log1p(Y)` and predicts
-  `expm1(E[log1p(Y)|X])`, which by Jensen's inequality is *below* the conditional
-  count mean `E[Y|X]` whenever the conditional distribution is non-degenerate.
-  An independent check (`src/backtransform_bias.R`) quantifies this: the
-  in-sample log-scale residual SD is ~0.50, and on the training distribution the
-  mean of `expm1(mu)` is ~1.51 vs an actual mean of ~2.03 — a **~25% structural
-  under-prediction** that exists even under perfect calibration. The penalised
-  Poisson model eliminates this by predicting `E[Y]` directly, which is why its
-  2025 total bias shrinks to ~−14% from the ridge's ~−35%.
-- **The residual ~10% reflects genuine distribution shift** of the 2025 level
-  relative to history (theft at a decade low), over and above the structural
-  back-transform bias.
-- **Residuals are approximately centred** near zero on the count scale,
-  indicating low average bias once the back-transform issue is addressed.
-- **Largest absolute errors occur at high-count cells**: the target is a skewed
-  count, so absolute error grows with the magnitude of the true count.
+Retrospective 2025 scores (descriptive only; models refit on 2014–2024, per
+`output/tables/retrospective_2025.csv`):
+
+| Model | MAE | RMSE | R² | total bias |
+|---|---:|---:|---:|---:|
+| Poisson (area, tuned) | 1.06 | 1.69 | 0.754 | **+28.9%** |
+| Basis Ridge (tuned) | 0.83 | 1.98 | 0.661 | **−37.4%** |
+
+- **The log1p back-transform bias is a real, quantifiable mechanism — but not
+  yet a proven decomposition of the 2025 gap.** The ridge model fits
+  `log1p(Y)` and predicts `expm1(E[log1p(Y)|X])`, which by Jensen's inequality
+  is *below* the conditional count mean `E[Y|X]` whenever the conditional
+  distribution is non-degenerate. `src/backtransform_bias.R` quantifies this
+  *in-sample*: the log-scale residual SD is ~0.50, and on the training
+  distribution the mean of `expm1(mu)` is ~1.51 vs an actual mean of ~2.03 —
+  a structural downward bias of roughly 25% on the training level. What is
+  **not** established is how much of the ridge's −37% 2025 total bias this
+  mechanism explains: the 2025 level is also a decade low, so genuine
+  distribution shift acts in the same direction, and the Poisson model's
+  +29% over-prediction shows the two effects do not cancel cleanly. Splitting
+  the gap requires a dedicated back-transform-correction experiment (planned;
+  see Future Improvements), so this README deliberately avoids a "X points
+  bias + Y points shift" decomposition.
+- **Residuals are approximately centred** near zero on the count scale for
+  the selected models, indicating low average cell-level bias.
+- **Largest absolute errors occur at high-count cells**: the target is a
+  skewed count, so absolute error grows with the magnitude of the true count.
 - **The ridge model tends to smooth peaks** — extremely high months are
   under-predicted, a known limitation of shrinkage on the log target.
+- **The Poisson model is the mirror image**: it tracks the level on the
+  monthly task but overshoots the 2025 total by ~29%, and its horizon-12
+  fold-to-fold variance is large (sd 2.27, worst fold 7.87) — see the
+  Model Comparison tables.
 
 *Calibration note*: any calibration parameter (e.g. a multiplicative correction
 to fix the citywide total) must be learned from training data or a time-ordered
@@ -310,24 +339,30 @@ year.
   but not at address level.
 - **External covariates**: weather, population density, policing effort, and
   bike-infrastructure changes are absent from the dataset.
-- **Single-year hold-out**: one test year is a thinner generalisation guarantee
-  than multi-year rolling evaluation; the 2025 year has also been reused across
-  diagnostic rounds, so headline numbers need a horizon-1 rolling backtest to
-  be treated as deployment-grade.
+- **Repeatedly-viewed retrospective window**: the 2025 year has been reused
+  across diagnostic rounds, so its scores are descriptive evidence, not a
+  clean untouched hold-out. The rolling-origin backtests (not 2025) drive
+  model selection.
+- **Horizon-12 instability of the count model**: the penalised Poisson's
+  annual-ahead errors vary widely across folds (RMSE sd 2.27, worst fold
+  7.87), so the horizon-1 selection should not be extrapolated to annual
+  planning use.
 - **Structural decline**: theft volume has fallen ~47% from the 2018 peak.
   Models trained on history inherit that history's level; on 2025 the ridge
-  model under-predicts the total by ~35%, of which ~25 points are the structural
-  log1p back-transform bias and the remainder is genuine level shift.
+  model under-predicts the total by ~37% while the Poisson model over-predicts
+  it by ~29%. How much of the ridge's gap is back-transform bias versus
+  genuine level shift is an open question (see Error Analysis).
 
 ## Future Improvements
 
-- **Horizon-1 rolling backtest** to reconcile the CV (horizon-12) vs the 2025
-  hold-out results and produce a deployment-grade estimate.
+- **Back-transform correction experiment**: add a smearing/Duan-style
+  correction to the ridge-on-log model, learned strictly from training folds,
+  to causally isolate how much of the under-prediction is Jensen bias versus
+  genuine level shift.
 - **Penalised zero-inflated / negative-binomial** model to explicitly handle the
   ~55% zeros and over-dispersion (needs a package that penalises a NB/zio family).
 - **Online/rolling retraining** to track the sustained decline in theft volume.
 - **External covariates**: weather, holidays, and neighbourhood demographics.
-- **Multi-year rolling test** for a stronger generalisation estimate.
 - **Daily or hourly prediction granularity** — the dataset now supports it, and
   the hotspot analysis shows strong within-day structure worth modelling.
 - **Uncertainty quantification**: prediction intervals via bootstrap or
@@ -354,15 +389,19 @@ year.
 │   ├── validation.R       # time-aware split + expanding-window CV
 │   ├── models.R           # baselines and candidate models
 │   ├── evaluate.R         # comparison & final evaluation
+│   ├── backtest.R         # rolling-origin backtest engine (per horizon)
 │   ├── visualize.R        # EDA and diagnostic figures
 │   ├── hotspot_analysis.R # hourly/premises operational analysis
 │   ├── backtransform_bias.R # quantify log1p back-transform bias
 │   └── run_pipeline.R     # end-to-end entry point
 ├── test/
 │   ├── test_helper.R      # synthetic-data builders
+│   ├── run_tests.R        # R test entry point
 │   ├── test-data-quality.R  # NSA / coordinate / panel tests
 │   ├── test-leakage.R       # future-perturbation invariance
 │   ├── test-validation.R    # expanding-window fold tests
+│   ├── test-tuning.R        # nested chronological tuning tests
+│   ├── test-backtest.R      # backtest engine tests
 │   └── test_scripts.py      # download/convert error-handling tests
 └── output/
     ├── figures/        # generated figures
@@ -407,15 +446,22 @@ year.
 2. **Neighbourhood and seasonality dominate the signal.** The final model's
    predictive power comes chiefly from spatial fixed effects and the annual
    cycle, not from complex non-linearities — this holds for count models too.
-3. **Match the link function to the target.** A count link (Poisson, predicting
-   `E[Y]` directly) beats least squares on `log1p(Y)` once the count model is
-   given the same spatial structure and tuning budget — because the log1p
-   back-transform is downward-biased by Jensen's inequality. The earlier
-   "ridge-on-log wins" conclusion was an artefact of an unfair comparison.
+3. **Match the link function to the target — and the model to the horizon.**
+   On the monthly-updating task a count link (Poisson, predicting `E[Y]`
+   directly) beats least squares on `log1p(Y)` once the count model is given
+   the same spatial structure and tuning budget, because the log1p
+   back-transform is downward-biased by Jensen's inequality. On the
+   annual-ahead task the same Poisson model is unstable and the tuned
+   ridge-on-log wins on the tie-break. The earlier "ridge-on-log wins"
+   conclusion was an artefact of an unfair comparison; "Poisson always wins"
+   would be equally wrong.
 4. **Baselines matter.** A seasonal naive model already explains ~62% of
-   variance on the 2025 hold-out; any candidate model must convincingly beat it
-   to justify its complexity.
-5. **Separate structural bias from real shift.** The ~35% under-prediction on
-   2025 was mostly the log1p back-transform bias (~25 points), not distribution
-   shift (~10 points). Attributing error to the wrong cause leads to the wrong
-   fix (trend extrapolation vs. a count link).
+   variance on the 2025 retrospective; any candidate model must convincingly
+   beat it to justify its complexity — on horizon 12 the ridge only does so
+   via the tie-break.
+5. **Beware tidy causal decompositions.** The ridge's ~37% under-prediction
+   of the 2025 total is *consistent with* the quantified log1p back-transform
+   bias, but the 2025 level is simultaneously a decade low, and the Poisson
+   model over-predicts the same total by ~29%. Attributing the gap to one
+   cause without a dedicated correction experiment would be storytelling, not
+   evidence.

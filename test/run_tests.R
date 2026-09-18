@@ -26,6 +26,7 @@ source(file.path(TEST_ROOT, "src", "features.R"))
 source(file.path(TEST_ROOT, "src", "validation.R"))
 source(file.path(TEST_ROOT, "src", "models.R"))
 source(file.path(TEST_ROOT, "src", "evaluate.R"))
+source(file.path(TEST_ROOT, "src", "backtest.R"))
 
 # The helper's own source() of modules is idempotent; re-sourcing is fine.
 testthat::test_dir(test_root, reporter = "summary")

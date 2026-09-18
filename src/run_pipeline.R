@@ -7,11 +7,17 @@
 # Flow:
 #   1. load & audit raw data
 #   2. build monthly panel
-#   3. time-aware split + expanding-window CV
-#   4. compare baselines and candidate models fairly
-#   5. tune the regularisation strength of the best model
-#   6. final hold-out evaluation on 2025
+#   3. time-aware split (train 2014-2023 / validation 2024 / retrospective 2025)
+#   4. rolling-origin backtests for TWO separate forecast tasks
+#      (horizon = 1 and horizon = 12) on the training span
+#   5. predeclared model selection per horizon (backtest metrics only)
+#   6. retrospective evaluation on 2025 (descriptive, never used for selection)
 #   7. write comparison tables and diagnostic figures
+#
+# Model-selection rule (predeclared; keep README.md "Validation Strategy" in
+# sync): primary metric = mean outer-fold RMSE; tie-break = lower mean MAE
+# when mean RMSE differs by less than 1%; selection is made PER HORIZON.
+# 2025 retrospective scores are descriptive and do not change selection.
 
 library(dplyr)
 
@@ -33,10 +39,11 @@ source(file.path(ROOT, "src", "features.R"))
 source(file.path(ROOT, "src", "validation.R"))
 source(file.path(ROOT, "src", "models.R"))
 source(file.path(ROOT, "src", "evaluate.R"))
+source(file.path(ROOT, "src", "backtest.R"))
 source(file.path(ROOT, "src", "visualize.R"))
 
 main <- function() {
-  paths <- project_paths()
+  paths <- project_paths(ROOT)
   ensure_packages()
 
   dir.create(paths$figure_dir, recursive = TRUE, showWarnings = FALSE)
@@ -46,6 +53,7 @@ main <- function() {
   message("1/7 Loading and auditing raw data ...")
   raw <- read_bicycle(paths$raw_data)
   audit <- audit_bicycle(raw)
+  data_hash <- digest_file(paths$raw_data)
 
   message("2/7 Building monthly panel ...")
   prepared <- make_monthly_panel(raw)
@@ -57,9 +65,8 @@ main <- function() {
   validation <- splits$validation
   test <- splits$test
   train_val <- dplyr::bind_rows(train, validation)
-  folds <- make_expanding_folds(train_val)
 
-  message("4/7 Comparing candidate models with expanding-window CV ...")
+  message("4/7 Rolling backtests (horizon = 12 and horizon = 1) ...")
   # Unified tuning protocol (feedback2.0 P0 Task 2): both tuned models use
   # the SAME lambda grid and the SAME nested chronological tuning (inner
   # expanding-window folds inside each outer training window, RMSE primary
@@ -99,8 +106,29 @@ main <- function() {
                                    alpha = 0, with_area = TRUE)),
     "Negative-binomial"      = model_negbin_glm(with_area = FALSE)
   )
-  cv_results <- compare_models_cv(train_val, folds, models)
-  cv_summary <- summarise_cv(cv_results)
+
+  # --- Task A: horizon = 12 (annual-ahead planning) -----------------------
+  # Expanding annual origins over the training span (first test year follows
+  # a 60-month initial window).
+  folds_h12 <- make_rolling_folds(
+    train_val, horizon_months = 12L, min_train_months = 60L
+  )
+  bt12 <- run_backtest(train_val, models, folds_h12, horizon_months = 12L)
+
+  # --- Task B: horizon = 1 (monthly updating) -----------------------------
+  # Monthly rolling origins over the LAST 12 months of the training span
+  # (calendar 2024): each origin refits on everything before it and predicts
+  # the next month. 12 origins keep the per-origin tuning cost bounded while
+  # still sampling all seasons.
+  first_h1 <- min(train_val$time_index[train_val$year == 2024])
+  folds_h1 <- make_rolling_folds(
+    train_val, horizon_months = 1L, min_train_months = 60L,
+    first_test_index = first_h1
+  )
+  bt1 <- run_backtest(train_val, models, folds_h1, horizon_months = 1L)
+
+  backtest_results <- dplyr::bind_rows(bt12, bt1)
+  backtest_summary <- summarise_backtest(backtest_results)
 
   # Consolidate the per-outer-fold tuning audit trail.
   tuning_traces <- dplyr::bind_rows(trace_env$traces)
@@ -112,11 +140,21 @@ main <- function() {
     ) |>
     dplyr::arrange(model, outer_fold, inner_fold, lambda)
 
-  message("5/7 Final hold-out evaluation on 2025 (retrospective window) ...")
-  # The tuned models are re-tuned once on the full train+validation window
-  # through the same nested chronological protocol (trace recorded), then
-  # scored on 2025. 2025 is a REPEATEDLY-VIEWED retrospective window: it is
-  # reported descriptively and must not drive model selection.
+  message("5/7 Model selection from backtests (predeclared rule) ...")
+  selected <- backtest_summary |>
+    dplyr::filter(selected) |>
+    dplyr::select(task_horizon, model, mean_RMSE, mean_MAE)
+  print(selected, n = Inf)
+  selected_h12 <- selected$model[selected$task_horizon == 12][1]
+  selected_h1 <- selected$model[selected$task_horizon == 1][1]
+  message("  horizon=12 selects: ", selected_h12)
+  message("  horizon=1  selects: ", selected_h1)
+
+  message("6/7 Retrospective evaluation on 2025 (descriptive only) ...")
+  # 2025 is a REPEATEDLY-VIEWED retrospective window: every score here is
+  # descriptive and played no role in model selection. All candidate models
+  # are refit on train+validation; tuned models re-tune on train_val through
+  # the same nested chronological protocol (trace recorded separately).
   final_trace_env <- new.env(parent = emptyenv())
   final_trace_env$traces <- list()
   final_wrappers <- list(
@@ -130,17 +168,24 @@ main <- function() {
                                 path_model = poisson_path_model(
                                   alpha = 0, with_area = TRUE))
   )
-  holdout <- dplyr::bind_rows(lapply(names(models), function(nm) {
+  retrospective <- dplyr::bind_rows(lapply(names(models), function(nm) {
     fp <- if (nm %in% names(final_wrappers)) final_wrappers[[nm]]
           else models[[nm]]
-    final_holdout_evaluate(train, validation, test, fp, nm)
-  }))
-  comparison <- build_comparison_table(cv_summary, holdout) |>
-    dplyr::arrange(test_RMSE)
+    pred <- fp(train_val, test)
+    fm <- backtest_fold_metrics(test, pred)
+    fm |>
+      dplyr::mutate(
+        model = nm,
+        selected_h12 = nm == selected_h12,
+        selected_h1 = nm == selected_h1,
+        .before = 1
+      )
+  })) |>
+    dplyr::relocate(model, MAE, RMSE, R2, total_bias) |>
+    dplyr::arrange(RMSE)
 
-  # Full tuning audit trail: outer-CV folds plus the final refit.
   final_traces <- dplyr::bind_rows(final_trace_env$traces) |>
-    dplyr::mutate(outer_fold = "final") |>
+    dplyr::mutate(outer_fold = "retrospective_refit") |>
     dplyr::select(
       outer_fold, model, inner_fold, lambda, MAE, RMSE, R2, selected
     )
@@ -149,63 +194,56 @@ main <- function() {
     final_traces
   )
 
-  # Predictions on the 2025 retrospective window for both tuned models.
-  final_ridge <- final_wrappers[["Basis Ridge (tuned)"]]
-  final_poisson <- final_wrappers[["Poisson (area, tuned)"]]
-  final_pred <- final_ridge(train_val, test)
-  predictions <- test |>
-    dplyr::transmute(
-      month = as.Date(month),
-      neighborhood,
-      lon, lat,
-      actual = theft_count,
-      predicted = final_pred,
-      residual = actual - predicted
-    )
-
-  poisson_pred <- final_poisson(train_val, test)
-  poisson_predictions <- test |>
-    dplyr::transmute(
-      month = as.Date(month),
-      neighborhood,
-      actual = theft_count,
-      predicted = poisson_pred,
-      residual = actual - predicted
-    )
-
-  # Aggregate & stratified diagnostics (totals, monthly, non-zero, active).
-  error_report <- summarise_forecast_errors(predictions)
-  poisson_error_report <- summarise_forecast_errors(poisson_predictions)
+  # Predictions on the 2025 retrospective window for the selected model of
+  # each horizon (if the horizons agree, one set is produced once).
+  selected_models <- unique(c(selected_h12, selected_h1))
+  prediction_sets <- lapply(selected_models, function(nm) {
+    fp <- if (nm %in% names(final_wrappers)) final_wrappers[[nm]]
+          else models[[nm]]
+    pred <- fp(train_val, test)
+    test |>
+      dplyr::transmute(
+        model_id = nm,
+        month = as.Date(month),
+        neighborhood,
+        lon, lat,
+        actual = theft_count,
+        predicted = pred,
+        residual = actual - predicted
+      )
+  })
+  names(prediction_sets) <- selected_models
+  error_reports <- lapply(prediction_sets, summarise_forecast_errors)
 
   message("7/7 Writing outputs and figures ...")
   readr::write_csv(audit, file.path(paths$table_dir, "data_audit.csv"))
   readr::write_csv(
-    comparison, file.path(paths$table_dir, "model_comparison.csv")
+    backtest_results, file.path(paths$table_dir, "backtest_folds.csv")
   )
   readr::write_csv(
-    cv_results, file.path(paths$table_dir, "cv_folds.csv")
+    backtest_summary, file.path(paths$table_dir, "backtest_summary.csv")
+  )
+  readr::write_csv(
+    retrospective, file.path(paths$table_dir, "retrospective_2025.csv")
   )
   readr::write_csv(
     tuning_traces, file.path(paths$table_dir, "tuning_traces.csv")
   )
-  readr::write_csv(
-    predictions, file.path(paths$table_dir, "test_predictions.csv")
-  )
-  readr::write_csv(
-    error_report$monthly, file.path(paths$table_dir, "monthly_errors.csv")
-  )
-  readr::write_csv(
-    error_report$by_neighborhood,
-    file.path(paths$table_dir, "neighborhood_errors.csv")
-  )
-  readr::write_csv(
-    poisson_predictions,
-    file.path(paths$table_dir, "poisson_test_predictions.csv")
-  )
-  readr::write_csv(
-    poisson_error_report$monthly,
-    file.path(paths$table_dir, "poisson_monthly_errors.csv")
-  )
+  for (nm in selected_models) {
+    slug <- gsub("[^A-Za-z0-9]+", "_", tolower(nm))
+    readr::write_csv(
+      prediction_sets[[nm]],
+      file.path(paths$table_dir, paste0("predictions_", slug, ".csv"))
+    )
+    readr::write_csv(
+      error_reports[[nm]]$monthly,
+      file.path(paths$table_dir, paste0("monthly_errors_", slug, ".csv"))
+    )
+    readr::write_csv(
+      error_reports[[nm]]$by_neighborhood,
+      file.path(paths$table_dir, paste0("neighborhood_errors_", slug, ".csv"))
+    )
+  }
 
   # Diagnostic figures.
   ggplot2::ggsave(
@@ -221,62 +259,49 @@ main <- function() {
     plot_spatial_hotspots(panel), width = 9, height = 5.4, dpi = 180,
     bg = "white"
   )
-  ggplot2::ggsave(
-    file.path(paths$figure_dir, "04_observed_vs_predicted.png"),
-    plot_observed_vs_predicted(predictions),
-    width = 9, height = 5.4, dpi = 180, bg = "white"
-  )
-  ggplot2::ggsave(
-    file.path(paths$figure_dir, "05_residual_distribution.png"),
-    plot_residual_distribution(predictions),
-    width = 9, height = 5.4, dpi = 180, bg = "white"
-  )
+  for (nm in selected_models) {
+    slug <- gsub("[^A-Za-z0-9]+", "_", tolower(nm))
+    ggplot2::ggsave(
+      file.path(
+        paths$figure_dir, paste0("04_observed_vs_predicted_", slug, ".png")
+      ),
+      plot_observed_vs_predicted(prediction_sets[[nm]]),
+      width = 9, height = 5.4, dpi = 180, bg = "white"
+    )
+    ggplot2::ggsave(
+      file.path(
+        paths$figure_dir, paste0("05_residual_distribution_", slug, ".png")
+      ),
+      plot_residual_distribution(prediction_sets[[nm]]),
+      width = 9, height = 5.4, dpi = 180, bg = "white"
+    )
+  }
 
-  message("Done. Final model comparison:")
-  print(comparison, n = Inf)
-
-  message("\nAggregate & stratified diagnostics (2025 hold-out):")
-  message(sprintf(
-    "  [Ridge tuned] total actual = %.1f, predicted = %.1f, rel. bias = %+.2f%%",
-    error_report$total_actual, error_report$total_predicted,
-    100 * error_report$total_rel_bias
-  ))
-  message(sprintf(
-    "  [Ridge tuned] non-zero cells : MAE %.3f, RMSE %.3f",
-    error_report$nonzero_metrics$MAE, error_report$nonzero_metrics$RMSE
-  ))
-  message(sprintf(
-    "  [Ridge tuned] active neigh.  : MAE %.3f, RMSE %.3f",
-    error_report$active_metrics$MAE, error_report$active_metrics$RMSE
-  ))
-  message(sprintf(
-    "  [Poisson]     total actual = %.1f, predicted = %.1f, rel. bias = %+.2f%%",
-    poisson_error_report$total_actual, poisson_error_report$total_predicted,
-    100 * poisson_error_report$total_rel_bias
-  ))
-  message(sprintf(
-    "  [Poisson]     non-zero cells : MAE %.3f, RMSE %.3f",
-    poisson_error_report$nonzero_metrics$MAE,
-    poisson_error_report$nonzero_metrics$RMSE
-  ))
-  message(sprintf(
-    "  [Poisson]     active neigh.  : MAE %.3f, RMSE %.3f",
-    poisson_error_report$active_metrics$MAE,
-    poisson_error_report$active_metrics$RMSE
-  ))
+  message("Done. Backtest summary (selection basis):")
+  print(backtest_summary, n = Inf)
+  message("\nRetrospective 2025 (descriptive only):")
+  print(retrospective, n = Inf)
+  for (nm in selected_models) {
+    er <- error_reports[[nm]]
+    message(sprintf(
+      "  [%s] total actual = %.1f, predicted = %.1f, rel. bias = %+.2f%%",
+      nm, er$total_actual, er$total_predicted, 100 * er$total_rel_bias
+    ))
+  }
 
   invisible(list(
     paths = paths,
     audit = audit,
     panel = panel,
     splits = splits,
-    comparison = comparison,
-    cv_results = cv_results,
+    backtest_results = backtest_results,
+    backtest_summary = backtest_summary,
+    retrospective = retrospective,
     tuning_traces = tuning_traces,
-    predictions = predictions,
-    poisson_predictions = poisson_predictions,
-    error_report = error_report,
-    poisson_error_report = poisson_error_report
+    selected_h12 = selected_h12,
+    selected_h1 = selected_h1,
+    prediction_sets = prediction_sets,
+    error_reports = error_reports
   ))
 }
 
