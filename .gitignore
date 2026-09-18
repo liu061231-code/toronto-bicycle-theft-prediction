@@ -69,3 +69,4 @@ output/models/
 # --- Logs & temp ---
 *.log
 .DS_Store
+.gitkeep
