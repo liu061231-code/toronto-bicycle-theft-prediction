@@ -104,34 +104,81 @@ make_glm_design_matrix <- function(data, recipe, with_area = FALSE) {
   full[, keep, drop = FALSE]
 }
 
-# Poisson GLM (log link) with glmnet ridge/LASSO regularisation. With
+# Two-stage warm-start Poisson glmnet fit.
+#
+# glmnet's coordinate descent converges quickly only along a warm-started
+# path from lambda.max (sparse -> dense). Fitting a user lambda grid (or a
+# single lambda) that starts far below lambda.max makes the Poisson IRLS hit
+# maxit (~70s per fit, plus convergence warnings). Stage 1 walks the natural
+# path to discover lambda.max; stage 2 refits the merged path (natural +
+# requested values) so every requested lambda is an exact, warm-started path
+# point. The objective is convex, so the solutions coincide with a cold
+# single-lambda fit -- at a fraction of the cost.
+.glmnet_poisson_fit <- function(x, y, alpha, lambdas) {
+  fit0 <- tryCatch(
+    glmnet::glmnet(
+      x, y, family = "poisson", alpha = alpha, standardize = TRUE
+    ),
+    error = function(e) NULL
+  )
+  lam0 <- if (!is.null(fit0)) fit0$lambda else numeric(0)
+  lam0 <- lam0[is.finite(lam0)]
+  full_path <- sort(unique(c(lam0, lambdas)), decreasing = TRUE)
+  full_path <- full_path[is.finite(full_path)]
+  fit <- tryCatch(
+    glmnet::glmnet(
+      x, y, family = "poisson", alpha = alpha,
+      lambda = full_path, standardize = TRUE
+    ),
+    error = function(e) NULL
+  )
+  ok <- !is.null(fit) && any(is.finite(fit$lambda)) &&
+    any(lambdas %in% fit$lambda)
+  if (!ok) {
+    # Degenerate window (e.g. complete separation on tiny synthetic data):
+    # fall back to a plain cold fit on the requested lambdas, matching
+    # glmnet's legacy "solutions for larger lambdas returned" behaviour,
+    # which still yields a predict-able object.
+    fit <- glmnet::glmnet(
+      x, y, family = "poisson", alpha = alpha,
+      lambda = lambdas, standardize = TRUE
+    )
+  }
+  fit
+}
+
+# Poisson GLM (log link) with glmnet ridge regularisation. With
 # `with_area = TRUE` the neighbourhood one-hot block is included and the
 # penalty shrinks it (the matrix is rank-deficient without a penalty), giving
 # the Poisson model the same spatial structure as the ridge baseline.
-# `lambda = NULL` runs glmnet's internal cross-validation (cv.glmnet) to pick
-# lambda on the training fold only -- a fair, per-fold tuning budget.
-model_poisson_glm <- function(alpha = 0, lambda = 1e-2, with_area = TRUE) {
+#
+# `lambda` is REQUIRED and must come from the shared nested chronological
+# tuning protocol (tune_lambda_time_cv). Bare cv.glmnet() is deliberately NOT
+# used: its random K-fold assignment has no time meaning and would let late
+# periods inform the fit that "predicts" early ones (feedback2.0 P0 Task 2).
+#
+# Note on honesty: the Poisson mean model does NOT by itself resolve
+# zero-inflation or over-dispersion; it is a candidate count-mean model with
+# a log link, nothing more.
+model_poisson_glm <- function(alpha = 0, lambda, with_area = TRUE) {
   force(alpha)
+  if (missing(lambda) || is.null(lambda)) {
+    stop(
+      "model_poisson_glm() requires an explicit `lambda`. ",
+      "Select it with tune_lambda_time_cv() (nested chronological CV) -- ",
+      "random K-fold cv.glmnet is not an accepted tuning protocol here."
+    )
+  }
   force(lambda)
   force(with_area)
   function(train_data, test_data) {
     recipe <- make_basis_recipe(train_data)
     x_train <- make_glm_design_matrix(train_data, recipe, with_area = with_area)
     x_test <- make_glm_design_matrix(test_data, recipe, with_area = with_area)
-    if (is.null(lambda)) {
-      fit <- glmnet::cv.glmnet(
-        x_train, train_data$theft_count, family = "poisson",
-        alpha = alpha, standardize = TRUE
-      )
-      s <- fit$lambda.min
-    } else {
-      fit <- glmnet::glmnet(
-        x_train, train_data$theft_count, family = "poisson",
-        alpha = alpha, lambda = lambda, standardize = TRUE
-      )
-      s <- lambda
-    }
-    as.numeric(predict(fit, newx = x_test, s = s, type = "response"))
+    fit <- .glmnet_poisson_fit(
+      x_train, train_data$theft_count, alpha, lambda
+    )
+    as.numeric(predict(fit, newx = x_test, s = lambda, type = "response"))
   }
 }
 
@@ -186,4 +233,63 @@ model_ols_log <- function() {
     pred_log <- as.numeric(cbind(Intercept = 1, x_test) %*% coef)
     pmax(0, expm1(pred_log))
   }
+}
+
+# --- Fast path-fit interfaces for nested tuning ---------------------------
+#
+# glmnet fits an entire regularisation path in a single call, so the tuning
+# loop should fit ONE path per inner fold instead of one model per lambda.
+# A path model exposes:
+#   fit(train_data, lambda_grid) -> fitted object (with $recipe)
+#   build_x(recipe, test_data)   -> design matrix for new data
+#   predict_x(fitted, x_test, lambda) -> numeric predictions at `lambda`
+# tune_lambda_time_cv() uses this interface when supplied; the selection
+# protocol (grid, metric, tie-break) is unchanged. Both objectives are
+# convex, so path fits match single-lambda fits up to solver tolerance.
+
+ridge_log_path_model <- list(
+  fit = function(train_data, lambda_grid) {
+    recipe <- make_basis_recipe(train_data)
+    x_train <- make_design_matrix(train_data, recipe)
+    y_train <- log1p(train_data$theft_count)
+    fit <- glmnet::glmnet(
+      x_train, y_train, alpha = 0,
+      lambda = lambda_grid, standardize = TRUE
+    )
+    list(recipe = recipe, fit = fit)
+  },
+  build_x = function(recipe, test_data) {
+    make_design_matrix(test_data, recipe)
+  },
+  predict_x = function(fitted, x_test, lambda) {
+    pred_log <- as.numeric(predict(fitted$fit, newx = x_test, s = lambda))
+    pmax(0, expm1(pred_log))
+  }
+)
+
+poisson_path_model <- function(alpha = 0, with_area = TRUE) {
+  force(alpha)
+  force(with_area)
+  list(
+    fit = function(train_data, lambda_grid) {
+      recipe <- make_basis_recipe(train_data)
+      x_train <- make_glm_design_matrix(
+        train_data, recipe, with_area = with_area
+      )
+      # Warm-started path fit (see .glmnet_poisson_fit): seconds instead of
+      # minutes, with every requested lambda an exact path point.
+      fit <- .glmnet_poisson_fit(
+        x_train, train_data$theft_count, alpha, lambda_grid
+      )
+      list(recipe = recipe, fit = fit)
+    },
+    build_x = function(recipe, test_data) {
+      make_glm_design_matrix(test_data, recipe, with_area = with_area)
+    },
+    predict_x = function(fitted, x_test, lambda) {
+      as.numeric(predict(
+        fitted$fit, newx = x_test, s = lambda, type = "response"
+      ))
+    }
+  )
 }

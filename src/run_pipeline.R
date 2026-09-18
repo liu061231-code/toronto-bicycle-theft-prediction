@@ -60,60 +60,99 @@ main <- function() {
   folds <- make_expanding_folds(train_val)
 
   message("4/7 Comparing candidate models with expanding-window CV ...")
+  # Unified tuning protocol (feedback2.0 P0 Task 2): both tuned models use
+  # the SAME lambda grid and the SAME nested chronological tuning (inner
+  # expanding-window folds inside each outer training window, RMSE primary
+  # metric, 1% tie-break toward stronger regularisation). No random K-fold.
+  #
+  # Grid rationale (evidence-driven, then frozen): an earlier 8-point grid
+  # spanning 1e-1..1e-4 put the Poisson selection on the UPPER boundary
+  # (its inner-CV optimum sits near 1.0: mean RMSE falls monotonically from
+  # 8 -> 1 and rises again below 0.5), while the ridge landscape is flat
+  # down to 1e-4. The shared 14-point grid 4.0 -> 1e-4 brackets both optima
+  # so neither model's selection is forced to a grid edge.
+  lambda_grid <- exp(seq(log(4), log(1e-4), length.out = 14))
+  trace_env <- new.env(parent = emptyenv())
+  trace_env$traces <- list()
+
+  ridge_factory <- function(lambda) model_ridge_log(lambda = lambda)
+  poisson_factory <- function(lambda) {
+    model_poisson_glm(alpha = 0, lambda = lambda, with_area = TRUE)
+  }
+
   models <- list(
-    "Global mean"           = baseline_global_mean,
-    "Neighbourhood mean"    = baseline_neighborhood_mean,
-    "Recent 12-mo mean"     = baseline_recent_seasonal_mean(12),
-    "Seasonal naive"        = baseline_seasonal_naive,
-    "Basis OLS (log)"       = model_ols_log(),
-    "Basis Ridge (log)"     = model_ridge_log(),
-    "Poisson (compact)"     = model_poisson_glm(
-                                alpha = 0, lambda = NULL, with_area = FALSE),
-    "Poisson (area, ridge)" = model_poisson_glm(
-                                alpha = 0, lambda = NULL, with_area = TRUE),
-    "Negative-binomial"     = model_negbin_glm(with_area = FALSE)
+    "Global mean"            = baseline_global_mean,
+    "Neighbourhood mean"     = baseline_neighborhood_mean,
+    "Recent 12-mo mean"      = baseline_recent_seasonal_mean(12),
+    "Seasonal naive"         = baseline_seasonal_naive,
+    "Basis OLS (log)"        = model_ols_log(),
+    "Basis Ridge (tuned)"    = make_tuned_model(
+                                 "Basis Ridge (tuned)", ridge_factory,
+                                 lambda_grid, trace_env = trace_env,
+                                 path_model = ridge_log_path_model),
+    "Poisson (compact)"      = model_poisson_glm(
+                                 alpha = 0, lambda = 1e-2, with_area = FALSE),
+    "Poisson (area, tuned)"  = make_tuned_model(
+                                 "Poisson (area, tuned)", poisson_factory,
+                                 lambda_grid, trace_env = trace_env,
+                                 path_model = poisson_path_model(
+                                   alpha = 0, with_area = TRUE)),
+    "Negative-binomial"      = model_negbin_glm(with_area = FALSE)
   )
   cv_results <- compare_models_cv(train_val, folds, models)
   cv_summary <- summarise_cv(cv_results)
 
-  message("5/7 Tuning Ridge regularisation strength (lambda) ...")
-  lambda_grid <- exp(seq(log(1e-1), log(1e-4), length.out = 12))
-  lambda_cv <- lapply(lambda_grid, function(lam) {
-    m <- model_ridge_log(lambda = lam)
-    cv <- cross_validate(train_val, folds, m)
-    dplyr::summarise(
-      cv, lambda = lam,
-      cv_MAE = mean(MAE), cv_RMSE = mean(RMSE), cv_R2 = mean(R2)
-    )
-  }) |>
-    dplyr::bind_rows()
-  best_lambda <- lambda_cv$lambda[which.min(lambda_cv$cv_RMSE)]
-  message("  Best lambda = ", format(best_lambda, digits = 4))
+  # Consolidate the per-outer-fold tuning audit trail.
+  tuning_traces <- dplyr::bind_rows(trace_env$traces)
+  outer_ids <- sort(unique(tuning_traces$outer_train_end))
+  tuning_traces <- tuning_traces |>
+    dplyr::mutate(outer_fold = match(outer_train_end, outer_ids)) |>
+    dplyr::select(
+      outer_fold, model, inner_fold, lambda, MAE, RMSE, R2, selected
+    ) |>
+    dplyr::arrange(model, outer_fold, inner_fold, lambda)
 
-  message("6/7 Final hold-out evaluation on 2025 ...")
-  # Refit the tuned Ridge model on train+validation and score the test set.
-  final_model <- model_ridge_log(lambda = best_lambda)
+  message("5/7 Final hold-out evaluation on 2025 (retrospective window) ...")
+  # The tuned models are re-tuned once on the full train+validation window
+  # through the same nested chronological protocol (trace recorded), then
+  # scored on 2025. 2025 is a REPEATEDLY-VIEWED retrospective window: it is
+  # reported descriptively and must not drive model selection.
+  final_trace_env <- new.env(parent = emptyenv())
+  final_trace_env$traces <- list()
+  final_wrappers <- list(
+    "Basis Ridge (tuned)"   = make_tuned_model(
+                                "Basis Ridge (tuned)", ridge_factory,
+                                lambda_grid, trace_env = final_trace_env,
+                                path_model = ridge_log_path_model),
+    "Poisson (area, tuned)" = make_tuned_model(
+                                "Poisson (area, tuned)", poisson_factory,
+                                lambda_grid, trace_env = final_trace_env,
+                                path_model = poisson_path_model(
+                                  alpha = 0, with_area = TRUE))
+  )
   holdout <- dplyr::bind_rows(lapply(names(models), function(nm) {
-    final_holdout_evaluate(train, validation, test, models[[nm]], nm)
+    fp <- if (nm %in% names(final_wrappers)) final_wrappers[[nm]]
+          else models[[nm]]
+    final_holdout_evaluate(train, validation, test, fp, nm)
   }))
-  # Add the tuned Ridge as an explicit row so the final model is visible,
-  # attaching its CV score directly from the lambda grid search.
-  tuned_cv <- lambda_cv |>
-    dplyr::filter(lambda == best_lambda)
-  holdout_tuned <- final_holdout_evaluate(
-    train, validation, test, final_model, "Basis Ridge (tuned)"
-  ) |>
-    dplyr::mutate(
-      cv_MAE = tuned_cv$cv_MAE,
-      cv_RMSE = tuned_cv$cv_RMSE,
-      cv_R2 = tuned_cv$cv_R2
-    )
-  holdout <- dplyr::bind_rows(holdout, holdout_tuned)
   comparison <- build_comparison_table(cv_summary, holdout) |>
     dplyr::arrange(test_RMSE)
 
-  # Generate final-model predictions for error analysis.
-  final_pred <- final_model(train_val, test)
+  # Full tuning audit trail: outer-CV folds plus the final refit.
+  final_traces <- dplyr::bind_rows(final_trace_env$traces) |>
+    dplyr::mutate(outer_fold = "final") |>
+    dplyr::select(
+      outer_fold, model, inner_fold, lambda, MAE, RMSE, R2, selected
+    )
+  tuning_traces <- dplyr::bind_rows(
+    tuning_traces |> dplyr::mutate(outer_fold = as.character(outer_fold)),
+    final_traces
+  )
+
+  # Predictions on the 2025 retrospective window for both tuned models.
+  final_ridge <- final_wrappers[["Basis Ridge (tuned)"]]
+  final_poisson <- final_wrappers[["Poisson (area, tuned)"]]
+  final_pred <- final_ridge(train_val, test)
   predictions <- test |>
     dplyr::transmute(
       month = as.Date(month),
@@ -124,15 +163,7 @@ main <- function() {
       residual = actual - predicted
     )
 
-  # Also produce predictions for the best count model (Poisson with area
-  # fixed effects + ridge penalty), which outperforms the ridge-on-log model
-  # under a fair comparison (see model_comparison.csv / README). Its count-link
-  # prediction is the conditional mean directly, avoiding the log1p
-  # back-transform bias.
-  poisson_final <- model_poisson_glm(
-    alpha = 0, lambda = NULL, with_area = TRUE
-  )
-  poisson_pred <- poisson_final(train_val, test)
+  poisson_pred <- final_poisson(train_val, test)
   poisson_predictions <- test |>
     dplyr::transmute(
       month = as.Date(month),
@@ -155,7 +186,7 @@ main <- function() {
     cv_results, file.path(paths$table_dir, "cv_folds.csv")
   )
   readr::write_csv(
-    lambda_cv, file.path(paths$table_dir, "lambda_tuning.csv")
+    tuning_traces, file.path(paths$table_dir, "tuning_traces.csv")
   )
   readr::write_csv(
     predictions, file.path(paths$table_dir, "test_predictions.csv")
@@ -241,8 +272,7 @@ main <- function() {
     splits = splits,
     comparison = comparison,
     cv_results = cv_results,
-    lambda_cv = lambda_cv,
-    best_lambda = best_lambda,
+    tuning_traces = tuning_traces,
     predictions = predictions,
     poisson_predictions = poisson_predictions,
     error_report = error_report,
