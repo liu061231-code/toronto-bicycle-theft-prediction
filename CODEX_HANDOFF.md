@@ -170,6 +170,10 @@ Rscript src/hotspot_analysis.R     # 小时级热点分析（依赖 enhanced 数
    - 显式建模 ~55% 的零值，直接回应"数据性质 vs 模型选择"的方法论缺口。
    - R 可用 `pscl::zeroinfl` 或 `glmmTMB::glmmTMB(family=nbinom2, ziformula=~1)`。
    - 与现有 Ridge 在同一 validation 框架下公平对比即可。
+   - **环境前置**：`pscl` / `glmmTMB` 当前**尚未安装**，实现时需先
+     `install.packages(c("pscl","glmmTMB"))`（`glmmTMB` 依赖较重，若编译失败可退回仅用 `pscl`），
+     并同步追加到 `requirements.txt` 与 `src/config.R` 的 `required_packages`，
+     否则 `ensure_packages()` 会在新环境校验时遗漏。
 
 2. **引入外部协变量**（把"预测"推向"解释"）
    - 天气（气温/降水）、节假日、社区人口/警务密度。
