@@ -75,3 +75,56 @@ build_comparison_table <- function(cv_summary, holdout_results) {
   joined |>
     dplyr::relocate(model, cv_MAE, cv_RMSE, cv_R2, test_MAE, test_RMSE, test_R2)
 }
+
+# --- Total & stratified diagnostics --------------------------------------
+#
+# Summarise the final model's aggregate and stratified errors so the report is
+# not reduced to a single R². `predictions` must contain `month`,
+# `neighborhood`, `actual`, and `predicted` columns.
+summarise_forecast_errors <- function(predictions) {
+  total_actual <- sum(predictions$actual)
+  total_pred <- sum(predictions$predicted)
+  total_rel_bias <- (total_pred - total_actual) / total_actual
+
+  # Monthly citywide totals (aggregate error by month).
+  monthly <- predictions |>
+    dplyr::mutate(month = as.Date(month)) |>
+    dplyr::group_by(month) |>
+    dplyr::summarise(
+      actual = sum(actual), predicted = sum(predicted), .groups = "drop"
+    ) |>
+    dplyr::mutate(rel_bias = (predicted - actual) / actual)
+
+  # Non-zero sample error (months where actual > 0).
+  nonzero <- dplyr::filter(predictions, actual > 0)
+  m_nonzero <- regression_metrics(nonzero$actual, nonzero$predicted)
+
+  # Active-neighbourhood error (neighbourhoods with above-median activity).
+  active <- predictions |>
+    dplyr::group_by(neighborhood) |>
+    dplyr::summarise(total_actual = sum(actual), .groups = "drop")
+  med <- stats::median(active$total_actual)
+  active_neighb <- active$neighborhood[active$total_actual >= med]
+  active_pred <- dplyr::filter(predictions, neighborhood %in% active_neighb)
+  m_active <- regression_metrics(active_pred$actual, active_pred$predicted)
+
+  # Per-neighbourhood stratified metrics.
+  by_neighborhood <- predictions |>
+    dplyr::group_by(neighborhood) |>
+    dplyr::summarise(
+      actual_total = sum(actual),
+      predicted_total = sum(predicted),
+      rel_bias = (sum(predicted) - sum(actual)) / sum(actual),
+      .groups = "drop"
+    )
+
+  list(
+    total_actual = total_actual,
+    total_predicted = total_pred,
+    total_rel_bias = total_rel_bias,
+    monthly = monthly,
+    nonzero_metrics = m_nonzero,
+    active_metrics = m_active,
+    by_neighborhood = by_neighborhood
+  )
+}

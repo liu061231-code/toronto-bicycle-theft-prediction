@@ -57,6 +57,25 @@ baseline_seasonal_naive <- function(train_data, test_data) {
   )
 }
 
+# Recent-window seasonal mean: for each neighbourhood, the mean of the most
+# recent `window_months` months of training data. This is a realistic
+# deployment baseline that adapts to the recent level (and thus to the ongoing
+# decline) far better than a full-history mean. Added for a fair, actionable
+# comparison (handoff 4.A).
+baseline_recent_seasonal_mean <- function(window_months = 12) {
+  force(window_months)
+  function(train_data, test_data) {
+    means <- train_data |>
+      dplyr::group_by(neighborhood) |>
+      dplyr::slice_tail(n = window_months) |>
+      dplyr::summarise(value = mean(theft_count), .groups = "drop")
+    test_data |>
+      dplyr::select(neighborhood) |>
+      dplyr::left_join(means, by = "neighborhood") |>
+      dplyr::pull(value)
+  }
+}
+
 # --- Statistical models --------------------------------------------------
 #
 # Each model factory returns a `fit_predict(train_data, test_data)` closure
@@ -66,43 +85,72 @@ baseline_seasonal_naive <- function(train_data, test_data) {
 # reflect only that fold's training data (never the full timeline), otherwise
 # early folds extrapolate wildly and leak future information.
 
-# A compact design matrix for GLMs: temporal B-splines + seasonal harmonics
-# + spatial RBFs. Neighbourhood one-hot indicators are excluded because the
-# full matrix (with 140 indicators) is rank-deficient (151/167) and, without
-# a penalty, makes maximum-likelihood estimation unstable.
-make_glm_design_matrix <- function(data, recipe) {
+# Design matrices for GLMs.
+#
+# `make_glm_design_matrix(..., with_area = FALSE)` returns the compact matrix
+# (temporal B-splines + seasonal harmonics + spatial RBFs), matching the
+# original GLM setup. `with_area = TRUE` additionally appends the neighbourhood
+# one-hot indicators so the count GLMs carry the same spatial structure as the
+# linear/ridge models -- required for a *fair* comparison (handoff 4.A). The
+# resulting matrix is rank-deficient in the one-hot block, so a penalty is
+# mandatory; glmnet's ridge/lasso handles this cleanly.
+make_glm_design_matrix <- function(data, recipe, with_area = FALSE) {
   full <- make_design_matrix(data, recipe)
-  keep <- grepl("^(time_bs_|sin|cos|space_rbf_)", colnames(full))
+  if (with_area) {
+    keep <- grepl("^(time_bs_|sin|cos|space_rbf_|area_)", colnames(full))
+  } else {
+    keep <- grepl("^(time_bs_|sin|cos|space_rbf_)", colnames(full))
+  }
   full[, keep, drop = FALSE]
 }
 
-# Poisson GLM (log link) with ridge/LASSO regularisation via glmnet on the
-# compact design matrix. The penalty stabilises the spatial RBF basis.
-# Predictions are expected counts (non-negative).
-model_poisson_glm <- function(alpha = 0, lambda = 1e-2) {
+# Poisson GLM (log link) with glmnet ridge/LASSO regularisation. With
+# `with_area = TRUE` the neighbourhood one-hot block is included and the
+# penalty shrinks it (the matrix is rank-deficient without a penalty), giving
+# the Poisson model the same spatial structure as the ridge baseline.
+# `lambda = NULL` runs glmnet's internal cross-validation (cv.glmnet) to pick
+# lambda on the training fold only -- a fair, per-fold tuning budget.
+model_poisson_glm <- function(alpha = 0, lambda = 1e-2, with_area = TRUE) {
   force(alpha)
   force(lambda)
+  force(with_area)
   function(train_data, test_data) {
     recipe <- make_basis_recipe(train_data)
-    x_train <- make_glm_design_matrix(train_data, recipe)
-    x_test <- make_glm_design_matrix(test_data, recipe)
-    fit <- glmnet::glmnet(
-      x_train, train_data$theft_count, family = "poisson",
-      alpha = alpha, lambda = lambda, standardize = TRUE
-    )
-    as.numeric(predict(fit, newx = x_test, s = lambda, type = "response"))
+    x_train <- make_glm_design_matrix(train_data, recipe, with_area = with_area)
+    x_test <- make_glm_design_matrix(test_data, recipe, with_area = with_area)
+    if (is.null(lambda)) {
+      fit <- glmnet::cv.glmnet(
+        x_train, train_data$theft_count, family = "poisson",
+        alpha = alpha, standardize = TRUE
+      )
+      s <- fit$lambda.min
+    } else {
+      fit <- glmnet::glmnet(
+        x_train, train_data$theft_count, family = "poisson",
+        alpha = alpha, lambda = lambda, standardize = TRUE
+      )
+      s <- lambda
+    }
+    as.numeric(predict(fit, newx = x_test, s = s, type = "response"))
   }
 }
 
-# Negative-binomial GLM (log link) on the compact design matrix. The
-# dispersion parameter accommodates variance > mean.
-model_negbin_glm <- function() {
+# Negative-binomial GLM (log link) via MASS::glm.nb, which estimates the
+# dispersion (theta) by maximum likelihood. glmnet 5.0 does NOT support a
+# negative-binomial family, so the NB model cannot use a ridge penalty on the
+# rank-deficient neighbourhood one-hot block; it therefore uses the COMPACT
+# feature set (time + seasonal + spatial RBF, no area one-hot). For a fair
+# Poisson-vs-NB comparison, Poisson is also offered in compact form (see
+# `with_area = FALSE`). The NB dispersion accommodates variance > mean.
+model_negbin_glm <- function(with_area = FALSE) {
+  force(with_area)
   function(train_data, test_data) {
     recipe <- make_basis_recipe(train_data)
-    x_train <- make_glm_design_matrix(train_data, recipe)
-    x_test <- make_glm_design_matrix(test_data, recipe)
+    x_train <- make_glm_design_matrix(train_data, recipe, with_area = with_area)
+    x_test <- make_glm_design_matrix(test_data, recipe, with_area = with_area)
     df_train <- as.data.frame(x_train)
     df_train$theft_count <- train_data$theft_count
+    # Capture convergence warnings so failures are not silently averaged away.
     fit <- MASS::glm.nb(theft_count ~ . - 1, data = df_train)
     as.numeric(predict(fit, newdata = as.data.frame(x_test), type = "response"))
   }

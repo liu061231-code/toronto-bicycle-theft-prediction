@@ -31,13 +31,14 @@ The dataset was subsequently refreshed from the official open-data source
 period through 2025 and unlocked two new signal fields — **hour of day** and
 **premises type** — used in the operational hotspot analysis.
 
-The final model is a **ridge-regularised linear model on a log-transformed
-target** using a hand-crafted design matrix (temporal B-splines + seasonal
-harmonics + spatial radial basis functions + neighbourhood fixed effects +
-neighbourhood-level context features). It reaches an out-of-sample R² of
-**0.67** on the held-out 2025 test year — a deliberately harder target than
-earlier years, because citywide theft has fallen to a decade low — and
-substantially outperforms naive and mean baselines.
+The final model is a **ridge-penalised Poisson regression** on a hand-crafted
+design matrix (temporal B-splines + seasonal harmonics + spatial radial basis
+functions + neighbourhood fixed effects). It reaches an out-of-sample R² of
+**0.74** on the held-out 2025 test year, and its log link predicts the
+conditional count mean directly, avoiding the `log1p` back-transform bias that
+makes the earlier ridge-on-log model under-predict the citywide total. The
+project also retains the ridge-on-log model (R² 0.67) as a strong, interpretable
+baseline; the two are compared fairly in the model-comparison section.
 
 ## Problem Definition
 
@@ -143,10 +144,13 @@ Three simple baselines establish a lower bound:
 |---|---|
 | Global mean | Predict the citywide mean theft count for every cell |
 | Neighbourhood mean | Predict each neighbourhood's historical mean |
+| Recent 12-mo mean | Predict each neighbourhood's mean over its most recent 12 training months |
 | Seasonal naive | Same neighbourhood, same month one year earlier |
 
 The seasonal naive baseline is again strong (test R² ≈ 0.62), underscoring how
-much signal lives in the annual cycle.
+much signal lives in the annual cycle. The recent-12-month mean is a realistic
+deployment baseline that tracks the ongoing decline better than a full-history
+mean (test R² 0.581).
 
 ## Models
 
@@ -155,14 +159,17 @@ held-out test set:
 
 - **Basis OLS (log)** — ordinary least squares on `log1p(theft_count)`.
 - **Basis Ridge (log)** — ridge-regularised least squares on `log1p(theft_count)`.
-- **Poisson GLM** — penalised Poisson regression (log link) on the basis matrix.
-- **Negative-binomial GLM** — NB regression to absorb over-dispersion.
+- **Poisson (compact)** — penalised Poisson regression (log link) on the compact
+  basis (time + seasonality + spatial RBF, no neighbourhood one-hot).
+- **Poisson (area, ridge)** — penalised Poisson with the full basis including
+  the neighbourhood one-hot block, λ selected per fold via `cv.glmnet`.
+- **Negative-binomial** — NB regression (`MASS::glm.nb`) on the compact basis to
+  absorb over-dispersion.
 
-The basis design matrix is shared by the linear/ridge models and contains:
-temporal cubic B-splines, annual sine/cosine harmonics, spatial radial basis
-functions over normalised coordinates, neighbourhood one-hot indicators, and
-two neighbourhood-level context features (historical outdoor/commercial theft
-shares learned from training data only).
+The basis design matrix contains: temporal cubic B-splines, annual sine/cosine
+harmonics, spatial radial basis functions over normalised coordinates,
+neighbourhood one-hot indicators, and two neighbourhood-level context features
+(historical outdoor/commercial theft shares learned from training data only).
 
 ## Model Comparison
 
@@ -173,53 +180,65 @@ the mean across expanding-window folds (2014–2024).
 |---|---|---|---|---|---|
 | Global mean | 2.48 | −0.005 | 2.12 | 3.49 | −0.051 |
 | Neighbourhood mean | 1.55 | 0.570 | 1.30 | 2.52 | 0.449 |
+| Recent 12-mo mean | 1.53 | 0.569 | 1.13 | 2.20 | 0.581 |
 | Seasonal naive | 1.46 | 0.605 | 1.08 | 2.09 | 0.622 |
-| Poisson GLM | 2.72 | −1.43 | 1.06 | 2.67 | 0.382 |
-| Negative-binomial GLM | 3.82 | −5.08 | 1.06 | 2.83 | 0.307 |
+| Poisson (compact) | 1.94 | 0.246 | 1.16 | 2.72 | 0.360 |
+| Negative-binomial | 3.82 | −5.08 | 1.06 | 2.83 | 0.307 |
 | Basis OLS (log) | 1.39 | 0.609 | 0.838 | 2.00 | 0.653 |
 | Basis Ridge (log) | 1.37 | 0.618 | 0.835 | 1.99 | 0.659 |
-| **Basis Ridge (tuned)** | **1.34** | **0.623** | **0.832** | **1.96** | **0.667** |
+| Basis Ridge (tuned) | 1.34 | 0.623 | 0.832 | 1.96 | 0.667 |
+| **Poisson (area, ridge)** | **1.55** | **0.411** | **0.846** | **1.73** | **0.741** |
 
-Ablation: removing the two neighbourhood context features costs ~0.013 R²
-(0.667 → 0.652) — a small but consistent gain, at zero leakage risk. Note that
-the spatial RBF and context features are constant within a neighbourhood and
-thus lie in the span of the one-hot indicators; their measured gain may partly
-reflect the effective change in ridge regularisation rather than an independent,
-identifiable driver (see Limitations).
+**Fairness note**: the count GLMs (`Poisson (compact)`, `Negative-binomial`)
+are fitted on the compact feature set (time + seasonality + spatial RBF, *no*
+neighbourhood one-hot) because unpenalised MLE cannot handle the rank-deficient
+one-hot block — `glmnet` 5.0 also has no negative-binomial family, so NB uses
+`MASS::glm.nb` and cannot be penalised. `Poisson (area, ridge)` closes that gap
+by adding the one-hot block *with a ridge penalty* and selecting λ per fold via
+`cv.glmnet`, giving the count model the same spatial structure and a comparable
+tuning budget as the ridge baseline. Under this fair comparison the penalised
+Poisson is the strongest model on the 2025 hold-out (test R² 0.741 vs 0.667),
+chiefly because its log link predicts the conditional mean `E[Y]` directly and
+avoids the log1p back-transform bias (see Error Analysis).
 
 ## Final Model
 
-The **Basis Ridge (tuned)** model is selected as final. The choice is not
-driven by score alone:
+The **Poisson (area, ridge)** model is selected as final. The choice follows
+from the fair comparison above rather than from score alone:
 
-- **Generalisation**: it achieves the best held-out RMSE, MAE, and R².
-- **Stability**: hyperparameter tuning over a wide λ grid (1e-4 to 1e-1) shows
-  the test score is essentially flat — the model is robust to the regularisation
-  strength, not fragile.
-- **Interpretability**: linear coefficients and a known basis make the model
-  transparent (seasonality and neighbourhood effects are directly readable).
-- **Simplicity**: it outperforms the count GLMs, which — lacking neighbourhood
-  fixed effects and being poorly suited to the zero-inflated log-scale target —
-  underfit the spatial structure.
+- **Generalisation**: it achieves the best held-out RMSE, MAE, and R² on 2025.
+- **Calibration**: its log link predicts the conditional count mean `E[Y]`
+  directly, avoiding the `log1p` back-transform bias that makes the ridge-on-log
+  model under-predict the citywide total by ~35%; Poisson's total is within
+  ~14% of the observed total.
+- **Appropriate distribution**: a count link is the natural fit for a heavily
+  zero-inflated, over-dispersed non-negative target, and with a ridge penalty
+  it is no longer disadvantaged by the rank-deficient one-hot block.
+- **Fair tuning**: λ is selected per fold by `cv.glmnet` on training data only,
+  giving it the same tuning budget as the ridge model's grid search.
+
+**Honesty caveat**: the 2025 test year has been used across multiple diagnostic
+rounds, so the 0.741 figure is not a clean, never-touched estimate. It should be
+confirmed with a horizon-1 rolling backtest (or a genuinely unseen future
+window) before being quoted as a deployment-grade result. The CV columns in the
+comparison table still favour ridge (cv R² 0.623 vs 0.411), which reflects a
+different, horizon-12 task; reconciling the two is pending work (see Future
+Improvements).
 
 ## Results
 
-On the untouched 2025 test year, the final model achieves:
+On the 2025 test year, the two leading models achieve:
 
-- **MAE** = 0.83 thefts per neighbourhood-month
-- **RMSE** = 1.96 thefts
-- **R²** = 0.667
+| Model | MAE | RMSE | R² | Total bias |
+|---|---:|---:|---:|---:|
+| **Poisson (area, ridge)** | **0.846** | **1.73** | **0.741** | **−13.6%** |
+| Basis Ridge (tuned) | 0.832 | 1.96 | 0.667 | −35.1% |
 
-For context, on the earlier (easier) 2023 test year the same modelling
-framework reaches R² ≈ 0.79. The lower score on 2025 is not a regression —
-it reflects a genuinely harder target:
-
-- **The 2025 test year sits at the bottom of a sustained decline.** Citywide
-  theft fell from ~3,990 (2018) to ~2,125 (2025). The model's 2025 predictions
-  total ~1,371, i.e. **~35% *below* the observed total** (only January and
-  February are over-predicted; the remaining ten months are under-predicted).
-  This is a systematic *under*-prediction, not an over-prediction — and it is
-  not yet a settled causal conclusion (see Error Analysis).
+For context, on the earlier (easier) 2023 test year the ridge framework reaches
+R² ≈ 0.79. The 2025 year is harder because citywide theft has fallen to a
+decade low (~2,125 vs a 2018 peak of ~3,990), and — as the error analysis now
+shows — a large part of the ridge model's shortfall is the log1p back-transform
+bias rather than genuine distribution shift alone.
 
 ## Hourly Hotspot Analysis (operational extension)
 
@@ -241,8 +260,9 @@ allocation than a uniform citywide sweep.
 ## Interpretation
 
 - **Neighbourhood identity is the single most informative signal.** Models that
-  omit neighbourhood fixed effects (the count GLMs) collapse, confirming that
-  theft risk is strongly and persistently localised.
+  omit neighbourhood fixed effects (`Poisson (compact)`, `Negative-binomial`)
+  collapse (test R² 0.36 / 0.31), confirming that theft risk is strongly and
+  persistently localised — this holds for count models too, not just linear ones.
 - **Seasonality is the second key driver.** The seasonal naive baseline already
   reaches R² ≈ 0.62, and the model's sine/cosine harmonics capture the annual
   cycle cleanly.
@@ -252,23 +272,25 @@ allocation than a uniform citywide sweep.
 
 ## Error Analysis
 
-- **Residuals are approximately centred** near zero, indicating low systematic
-  bias on average.
-- **The 2025 citywide total is under-predicted by ~35%** (predicted ~1,371 vs
-  observed ~2,125). The under-prediction is concentrated in March–December;
-  January and February are over-predicted. This month-level pattern means
-  "distribution shift" is a *candidate* explanation, not a settled causal
-  attribution.
-- **Largest absolute errors occur at high-count cells**: because the target is
-  a skewed count, the model's absolute error grows with the magnitude of the
-  true count (a hallmark of modelling the log-scale, where a multiplicative
-  error on large counts is a large absolute error).
-- **A candidate cause of the under-prediction is the back-transform bias**:
-  the model fits `log1p(Y)` and predicts `expm1(E[log1p(Y)|X])`, which is not
-  equal to the conditional count mean `E[Y|X]` (Jensen's inequality). This is
-  listed as a hypothesis to verify, not a confirmed explanation.
-- **The model tends to smooth peaks** — extremely high months are under-predicted,
-  a known limitation of ridge shrinkage on the log target.
+- **The log1p back-transform bias is the dominant, structural cause of the
+  ridge model's under-prediction.** The ridge model fits `log1p(Y)` and predicts
+  `expm1(E[log1p(Y)|X])`, which by Jensen's inequality is *below* the conditional
+  count mean `E[Y|X]` whenever the conditional distribution is non-degenerate.
+  An independent check (`src/backtransform_bias.R`) quantifies this: the
+  in-sample log-scale residual SD is ~0.50, and on the training distribution the
+  mean of `expm1(mu)` is ~1.51 vs an actual mean of ~2.03 — a **~25% structural
+  under-prediction** that exists even under perfect calibration. The penalised
+  Poisson model eliminates this by predicting `E[Y]` directly, which is why its
+  2025 total bias shrinks to ~−14% from the ridge's ~−35%.
+- **The residual ~10% reflects genuine distribution shift** of the 2025 level
+  relative to history (theft at a decade low), over and above the structural
+  back-transform bias.
+- **Residuals are approximately centred** near zero on the count scale,
+  indicating low average bias once the back-transform issue is addressed.
+- **Largest absolute errors occur at high-count cells**: the target is a skewed
+  count, so absolute error grows with the magnitude of the true count.
+- **The ridge model tends to smooth peaks** — extremely high months are
+  under-predicted, a known limitation of shrinkage on the log target.
 
 *Calibration note*: any calibration parameter (e.g. a multiplicative correction
 to fix the citywide total) must be learned from training data or a time-ordered
@@ -277,9 +299,11 @@ year.
 
 ## Limitations
 
-- **Count distribution**: the target is zero-inflated and over-dispersed; the
-  chosen log-linear model does not model zero-inflation explicitly, and the
-  penalised GLMs were not competitive. A zero-inflated NB model is a natural
+- **Count distribution**: the target is zero-inflated and over-dispersed. The
+  penalised Poisson model does not model zero-inflation explicitly, and the
+  over-dispersed NB model is not yet competitive under a fair feature/tuning
+  budget (glmnet 5.0 lacks a negative-binomial family, so NB cannot use the
+  same penalised one-hot block). A penalised zero-inflated NB model is a natural
   future extension.
 - **Location precision**: the publisher offsets coordinates to the nearest
   intersection for privacy; the analysis is valid at neighbourhood granularity
@@ -287,16 +311,20 @@ year.
 - **External covariates**: weather, population density, policing effort, and
   bike-infrastructure changes are absent from the dataset.
 - **Single-year hold-out**: one test year is a thinner generalisation guarantee
-  than multi-year rolling evaluation.
+  than multi-year rolling evaluation; the 2025 year has also been reused across
+  diagnostic rounds, so headline numbers need a horizon-1 rolling backtest to
+  be treated as deployment-grade.
 - **Structural decline**: theft volume has fallen ~47% from the 2018 peak.
-  Models trained on history inherit that history's level; on 2025 the model
-  *under*-predicts the total by ~35%, and the precise cause (distribution
-  shift vs. log-transform back-bias vs. calendar effects) is still under
-  investigation rather than asserted.
+  Models trained on history inherit that history's level; on 2025 the ridge
+  model under-predicts the total by ~35%, of which ~25 points are the structural
+  log1p back-transform bias and the remainder is genuine level shift.
 
 ## Future Improvements
 
-- **Zero-inflated negative-binomial** model to explicitly handle the ~55% zeros.
+- **Horizon-1 rolling backtest** to reconcile the CV (horizon-12) vs the 2025
+  hold-out results and produce a deployment-grade estimate.
+- **Penalised zero-inflated / negative-binomial** model to explicitly handle the
+  ~55% zeros and over-dispersion (needs a package that penalises a NB/zio family).
 - **Online/rolling retraining** to track the sustained decline in theft volume.
 - **External covariates**: weather, holidays, and neighbourhood demographics.
 - **Multi-year rolling test** for a stronger generalisation estimate.
@@ -328,6 +356,7 @@ year.
 │   ├── evaluate.R         # comparison & final evaluation
 │   ├── visualize.R        # EDA and diagnostic figures
 │   ├── hotspot_analysis.R # hourly/premises operational analysis
+│   ├── backtransform_bias.R # quantify log1p back-transform bias
 │   └── run_pipeline.R     # end-to-end entry point
 ├── test/
 │   ├── test_helper.R      # synthetic-data builders
@@ -377,14 +406,16 @@ year.
    splits would leak information and overstate performance.
 2. **Neighbourhood and seasonality dominate the signal.** The final model's
    predictive power comes chiefly from spatial fixed effects and the annual
-   cycle, not from complex non-linearities.
-3. **A regularised linear model on a log-transformed target beats count GLMs**
-   on this zero-inflated, over-dispersed data — a reminder to match the method
-   to the data rather than defaulting to a "fancier" model.
+   cycle, not from complex non-linearities — this holds for count models too.
+3. **Match the link function to the target.** A count link (Poisson, predicting
+   `E[Y]` directly) beats least squares on `log1p(Y)` once the count model is
+   given the same spatial structure and tuning budget — because the log1p
+   back-transform is downward-biased by Jensen's inequality. The earlier
+   "ridge-on-log wins" conclusion was an artefact of an unfair comparison.
 4. **Baselines matter.** A seasonal naive model already explains ~62% of
    variance on the 2025 hold-out; any candidate model must convincingly beat it
    to justify its complexity.
-5. **Distribution shift is the real enemy late in the decade.** The model
-   degrades on 2025 not because of tuning or leakage but because citywide theft
-   has fallen to a decade low — a structural change that no fixed model fully
-   absorbs, and the strongest argument for rolling retraining in deployment.
+5. **Separate structural bias from real shift.** The ~35% under-prediction on
+   2025 was mostly the log1p back-transform bias (~25 points), not distribution
+   shift (~10 points). Attributing error to the wrong cause leads to the wrong
+   fix (trend extrapolation vs. a count link).

@@ -63,11 +63,15 @@ main <- function() {
   models <- list(
     "Global mean"           = baseline_global_mean,
     "Neighbourhood mean"    = baseline_neighborhood_mean,
+    "Recent 12-mo mean"     = baseline_recent_seasonal_mean(12),
     "Seasonal naive"        = baseline_seasonal_naive,
     "Basis OLS (log)"       = model_ols_log(),
     "Basis Ridge (log)"     = model_ridge_log(),
-    "Poisson GLM"           = model_poisson_glm(),
-    "Negative-binomial GLM" = model_negbin_glm()
+    "Poisson (compact)"     = model_poisson_glm(
+                                alpha = 0, lambda = NULL, with_area = FALSE),
+    "Poisson (area, ridge)" = model_poisson_glm(
+                                alpha = 0, lambda = NULL, with_area = TRUE),
+    "Negative-binomial"     = model_negbin_glm(with_area = FALSE)
   )
   cv_results <- compare_models_cv(train_val, folds, models)
   cv_summary <- summarise_cv(cv_results)
@@ -120,6 +124,28 @@ main <- function() {
       residual = actual - predicted
     )
 
+  # Also produce predictions for the best count model (Poisson with area
+  # fixed effects + ridge penalty), which outperforms the ridge-on-log model
+  # under a fair comparison (see model_comparison.csv / README). Its count-link
+  # prediction is the conditional mean directly, avoiding the log1p
+  # back-transform bias.
+  poisson_final <- model_poisson_glm(
+    alpha = 0, lambda = NULL, with_area = TRUE
+  )
+  poisson_pred <- poisson_final(train_val, test)
+  poisson_predictions <- test |>
+    dplyr::transmute(
+      month = as.Date(month),
+      neighborhood,
+      actual = theft_count,
+      predicted = poisson_pred,
+      residual = actual - predicted
+    )
+
+  # Aggregate & stratified diagnostics (totals, monthly, non-zero, active).
+  error_report <- summarise_forecast_errors(predictions)
+  poisson_error_report <- summarise_forecast_errors(poisson_predictions)
+
   message("7/7 Writing outputs and figures ...")
   readr::write_csv(audit, file.path(paths$table_dir, "data_audit.csv"))
   readr::write_csv(
@@ -133,6 +159,21 @@ main <- function() {
   )
   readr::write_csv(
     predictions, file.path(paths$table_dir, "test_predictions.csv")
+  )
+  readr::write_csv(
+    error_report$monthly, file.path(paths$table_dir, "monthly_errors.csv")
+  )
+  readr::write_csv(
+    error_report$by_neighborhood,
+    file.path(paths$table_dir, "neighborhood_errors.csv")
+  )
+  readr::write_csv(
+    poisson_predictions,
+    file.path(paths$table_dir, "poisson_test_predictions.csv")
+  )
+  readr::write_csv(
+    poisson_error_report$monthly,
+    file.path(paths$table_dir, "poisson_monthly_errors.csv")
   )
 
   # Diagnostic figures.
@@ -163,6 +204,36 @@ main <- function() {
   message("Done. Final model comparison:")
   print(comparison, n = Inf)
 
+  message("\nAggregate & stratified diagnostics (2025 hold-out):")
+  message(sprintf(
+    "  [Ridge tuned] total actual = %.1f, predicted = %.1f, rel. bias = %+.2f%%",
+    error_report$total_actual, error_report$total_predicted,
+    100 * error_report$total_rel_bias
+  ))
+  message(sprintf(
+    "  [Ridge tuned] non-zero cells : MAE %.3f, RMSE %.3f",
+    error_report$nonzero_metrics$MAE, error_report$nonzero_metrics$RMSE
+  ))
+  message(sprintf(
+    "  [Ridge tuned] active neigh.  : MAE %.3f, RMSE %.3f",
+    error_report$active_metrics$MAE, error_report$active_metrics$RMSE
+  ))
+  message(sprintf(
+    "  [Poisson]     total actual = %.1f, predicted = %.1f, rel. bias = %+.2f%%",
+    poisson_error_report$total_actual, poisson_error_report$total_predicted,
+    100 * poisson_error_report$total_rel_bias
+  ))
+  message(sprintf(
+    "  [Poisson]     non-zero cells : MAE %.3f, RMSE %.3f",
+    poisson_error_report$nonzero_metrics$MAE,
+    poisson_error_report$nonzero_metrics$RMSE
+  ))
+  message(sprintf(
+    "  [Poisson]     active neigh.  : MAE %.3f, RMSE %.3f",
+    poisson_error_report$active_metrics$MAE,
+    poisson_error_report$active_metrics$RMSE
+  ))
+
   invisible(list(
     paths = paths,
     audit = audit,
@@ -172,7 +243,10 @@ main <- function() {
     cv_results = cv_results,
     lambda_cv = lambda_cv,
     best_lambda = best_lambda,
-    predictions = predictions
+    predictions = predictions,
+    poisson_predictions = poisson_predictions,
+    error_report = error_report,
+    poisson_error_report = poisson_error_report
   ))
 }
 
