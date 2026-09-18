@@ -70,3 +70,4 @@ output/models/
 *.log
 .DS_Store
 .gitkeep
+.workbuddy/
