@@ -63,7 +63,8 @@ substantially outperforms naive and mean baselines.
   intersection by the publisher for privacy; all analysis is therefore at
   neighbourhood, not address, granularity.
 - **Scale**: 40,524 incident records (2014–2026) → 20,304 neighbourhood-month
-  observations (141 neighbourhoods × 144 months, 2014-01 to 2025-12).
+  observations (141 neighbourhood units × 144 months, 2014-01 to 2025-12;
+  140 named neighbourhoods + the `NSA` unknown area).
 - **Key variables**: `date`, `neighborhood`, `bike_cost`, `location`
   (premises category), `long`/`lat` (neighbourhood centroid), plus `hour` and
   `premises_type` from the official feed (used in the hotspot analysis).
