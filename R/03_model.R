@@ -286,7 +286,7 @@ fit_models <- function(
   primary_model <- cv_comparison$model[which.min(cv_comparison$mean_rmse)]
   primary_fit <- candidate_fits[[match(primary_model, candidate_specs$model)]]
   additive_fit <- candidate_fits[[1]]
-  selected_lambda <- additive_fit$selected_lambda
+  selected_lambda <- primary_fit$selected_lambda
   final_recipe <- make_basis_recipe(tuning_panel)
   x_final <- make_design_matrix(tuning_panel, final_recipe)
   x_test <- make_design_matrix(test, final_recipe)
@@ -311,14 +311,14 @@ fit_models <- function(
     expm1(predict_ols(ols_coefficients, x_test))
   )
 
-  ridge_final <- additive_fit$ridge_model
-  ridge_prediction <- additive_fit$prediction
+  ridge_final <- primary_fit$ridge_model
+  ridge_prediction <- primary_fit$prediction
 
   metrics <- dplyr::bind_rows(
     metric_frame(actual_test, global_prediction, "Global mean"),
     metric_frame(actual_test, neighborhood_prediction, "Neighborhood mean"),
     metric_frame(actual_test, ols_prediction, "Basis OLS"),
-    metric_frame(actual_test, ridge_prediction, "Basis Ridge")
+    purrr::map_dfr(candidate_fits, function(candidate) candidate$metrics)
   )
   predictions <- test |>
     dplyr::transmute(
@@ -340,10 +340,13 @@ fit_models <- function(
     metrics = metrics,
     test_predictions = predictions,
     selected_lambda = selected_lambda,
-    validation_rmse = min(additive_fit$cv$summary$mean_rmse),
-    cv_results = additive_fit$cv$fold_results,
-    cv_summary = additive_fit$cv$summary,
-    cv_folds = additive_fit$cv$folds,
+    validation_rmse = min(primary_fit$cv$summary$mean_rmse),
+    cv_results = purrr::map_dfr(
+      candidate_fits,
+      function(candidate) candidate$cv$fold_results
+    ),
+    cv_summary = primary_fit$cv$summary,
+    cv_folds = primary_fit$cv$folds,
     cv_comparison = cv_comparison,
     candidate_fits = candidate_fits,
     primary_model = primary_model,

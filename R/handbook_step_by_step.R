@@ -34,6 +34,9 @@ source(file.path(
 
 write_handbook_outputs <- function(result) {
   p <- result$paths
+  model_summary <- build_model_summary(result$model_fit)
+  primary_summary <- model_summary |>
+    dplyr::filter(selected_by_cv)
   readr::write_csv(
     result$audit,
     file.path(p$analysis_dir, "data_audit.csv")
@@ -49,6 +52,10 @@ write_handbook_outputs <- function(result) {
   readr::write_csv(
     result$model_fit$metrics,
     file.path(p$analysis_dir, "model_metrics.csv")
+  )
+  readr::write_csv(
+    model_summary,
+    file.path(p$analysis_dir, "model_summary.csv")
   )
   readr::write_csv(
     result$model_fit$test_predictions,
@@ -78,17 +85,20 @@ write_handbook_outputs <- function(result) {
   readr::write_csv(
     tibble::tibble(
       parameter = c(
-        "selected_lambda", "mean_cv_rmse", "cv_folds",
+        "primary_model", "primary_selected_lambda",
+        "primary_mean_cv_rmse", "primary_sd_cv_rmse", "cv_folds",
         "time_basis_knots", "spatial_rbf_centers", "rbf_sigma"
       ),
-      value = c(
-        result$model_fit$selected_lambda,
-        result$model_fit$validation_rmse,
+      value = as.character(c(
+        primary_summary$model,
+        primary_summary$selected_lambda,
+        primary_summary$mean_cv_rmse,
+        primary_summary$sd_cv_rmse,
         length(result$model_fit$cv_folds),
         length(result$model_fit$recipe$time_knots),
         nrow(result$model_fit$recipe$rbf_centers),
         result$model_fit$recipe$rbf_sigma
-      )
+      ))
     ),
     file.path(p$analysis_dir, "basis_metadata.csv")
   )

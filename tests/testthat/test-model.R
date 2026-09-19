@@ -33,17 +33,22 @@ testthat::test_that("predictions are finite and non-negative", {
 testthat::test_that("metrics include every planned baseline and model", {
   testthat::expect_setequal(
     fit$metrics$model,
-    c("Global mean", "Neighborhood mean", "Basis OLS", "Basis Ridge")
+    c(
+      "Global mean", "Neighborhood mean", "Basis OLS",
+      "Additive Ridge", "Season-space Ridge"
+    )
   )
   testthat::expect_true(all(c("MAE", "RMSE", "R2") %in% names(fit$metrics)))
 })
 
 testthat::test_that("regularized basis model improves on the location baseline", {
-  ridge_rmse <- fit$metrics$RMSE[fit$metrics$model == "Basis Ridge"]
+  ridge_rmse <- fit$metrics$RMSE[
+    fit$metrics$model %in% c("Additive Ridge", "Season-space Ridge")
+  ]
   location_rmse <- fit$metrics$RMSE[
     fit$metrics$model == "Neighborhood mean"
   ]
-  testthat::expect_lt(ridge_rmse, location_rmse)
+  testthat::expect_true(all(ridge_rmse < location_rmse))
 })
 
 tuning_panel <- dplyr::bind_rows(splits$train, splits$validation)

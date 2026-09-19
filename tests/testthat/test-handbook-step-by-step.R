@@ -34,7 +34,11 @@ testthat::test_that("handbook workflow exposes verified intermediate objects", {
     sort(unique(result$model_fit$cv_results$validation_year)),
     2018:2022
   )
-  testthat::expect_equal(nrow(result$model_fit$cv_results), 500)
+  testthat::expect_equal(nrow(result$model_fit$cv_results), 1000)
+  testthat::expect_setequal(
+    unique(result$model_fit$cv_results$model),
+    c("Additive Ridge", "Season-space Ridge")
+  )
   testthat::expect_equal(nrow(result$model_fit$cv_summary), 100)
   testthat::expect_equal(
     length(result$model_fit$recipe$time_knots),
@@ -60,6 +64,7 @@ testthat::test_that("handbook workflow exposes verified intermediate objects", {
   expected_files <- c(
     "cross_validation_folds.csv",
     "cross_validation_results.csv",
+    "model_summary.csv",
     "model_metrics.csv",
     "test_predictions.csv",
     "basis_metadata.csv",
@@ -72,6 +77,39 @@ testthat::test_that("handbook workflow exposes verified intermediate objects", {
     output_result$paths$analysis_dir,
     expected_files
   ))))
+  model_summary <- readr::read_csv(
+    file.path(output_result$paths$analysis_dir, "model_summary.csv"),
+    show_col_types = FALSE
+  )
+  cv_results <- readr::read_csv(
+    file.path(output_result$paths$analysis_dir, "cross_validation_results.csv"),
+    show_col_types = FALSE
+  )
+  metadata <- readr::read_csv(
+    file.path(output_result$paths$analysis_dir, "basis_metadata.csv"),
+    show_col_types = FALSE
+  )
+  metrics <- readr::read_csv(
+    file.path(output_result$paths$analysis_dir, "model_metrics.csv"),
+    show_col_types = FALSE
+  )
+  testthat::expect_equal(sum(model_summary$selected_by_cv), 1L)
+  testthat::expect_setequal(
+    unique(cv_results$model),
+    c("Additive Ridge", "Season-space Ridge")
+  )
+  testthat::expect_equal(
+    sort(unique(cv_results$validation_year)),
+    2018:2022
+  )
+  testthat::expect_true(all(c(
+    "primary_model", "primary_selected_lambda",
+    "primary_mean_cv_rmse", "primary_sd_cv_rmse"
+  ) %in% metadata$parameter))
+  testthat::expect_false("selected_lambda" %in% metadata$parameter)
+  testthat::expect_true(all(c(
+    "Additive Ridge", "Season-space Ridge"
+  ) %in% metrics$model))
 })
 
 testthat::test_that("handbook and saved pipeline metrics are identical", {
@@ -168,7 +206,14 @@ testthat::test_that("tracked predictions audit primary 2023 figure data", {
     joined$saved_residual,
     joined$saved_actual - joined$saved_predicted
   )
-  testthat::expect_equal(joined$additive_ridge, joined$saved_predicted)
+  testthat::expect_equal(
+    joined$saved_predicted,
+    joined$runtime_prediction
+  )
+  testthat::expect_equal(
+    joined$season_space_ridge,
+    joined$saved_predicted
+  )
 })
 
 testthat::test_that("teacher feedback outputs are written from fitted models", {

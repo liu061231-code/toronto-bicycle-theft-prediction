@@ -64,7 +64,8 @@ validate_static_neighborhood_coordinates <- function(raw) {
 make_monthly_panel <- function(raw) {
   validate_static_neighborhood_coordinates(raw)
   coordinates <- raw |>
-    dplyr::distinct(neighborhood, lon = long, lat)
+    dplyr::distinct(neighborhood, lon = long, lat) |>
+    dplyr::arrange(neighborhood)
 
   months <- seq(as.Date("2014-01-01"), as.Date("2023-12-01"), by = "month")
   panel <- raw |>
