@@ -208,3 +208,53 @@ testthat::test_that("rolling CV labels additive and interaction candidates", {
   testthat::expect_true(all(additive$summary$model == "Additive Ridge"))
   testthat::expect_true(all(interaction$summary$model == "Season-space Ridge"))
 })
+
+testthat::test_that("canonical model summary identifies one CV-selected model", {
+  summary <- build_model_summary(fit)
+  testthat::expect_identical(
+    names(summary),
+    c(
+      "model", "role", "selected_by_cv", "selected_lambda",
+      "mean_cv_rmse", "sd_cv_rmse", "test_mae", "test_rmse",
+      "test_r2", "test_total_bias"
+    )
+  )
+  testthat::expect_setequal(
+    summary$model,
+    c(
+      "Global mean", "Neighborhood mean", "Basis OLS",
+      "Additive Ridge", "Season-space Ridge"
+    )
+  )
+  testthat::expect_identical(
+    summary$role,
+    c("baseline", "baseline", "benchmark", "candidate", "candidate")
+  )
+  testthat::expect_equal(sum(summary$selected_by_cv), 1L)
+  testthat::expect_identical(
+    summary$model[summary$selected_by_cv],
+    fit$primary_model
+  )
+  testthat::expect_true(all(is.na(
+    summary$selected_lambda[summary$role != "candidate"]
+  )))
+})
+
+testthat::test_that("canonical total bias reconciles with 2023 predictions", {
+  summary <- build_model_summary(fit)
+  selected <- summary[summary$selected_by_cv, ]
+  selected_column <- if (fit$primary_model == "Season-space Ridge") {
+    "season_space_ridge"
+  } else {
+    "additive_ridge"
+  }
+  expected_bias <- (
+    sum(fit$test_predictions[[selected_column]]) -
+      sum(fit$test_predictions$actual)
+  ) / sum(fit$test_predictions$actual)
+  testthat::expect_equal(selected$test_total_bias, expected_bias)
+  testthat::expect_error(
+    calculate_total_bias(c(0, 0), c(0, 1)),
+    "actual total must be positive"
+  )
+})

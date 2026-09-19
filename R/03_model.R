@@ -355,6 +355,84 @@ fit_models <- function(
   )
 }
 
+calculate_total_bias <- function(actual, predicted) {
+  if (length(actual) != length(predicted)) {
+    stop("actual and predicted must have the same length", call. = FALSE)
+  }
+  actual_total <- sum(actual)
+  if (!is.finite(actual_total) || actual_total <= 0) {
+    stop("actual total must be positive", call. = FALSE)
+  }
+  (sum(predicted) - actual_total) / actual_total
+}
+
+build_model_summary <- function(model_fit) {
+  predictions <- model_fit$test_predictions
+  baseline_specs <- tibble::tibble(
+    model = c("Global mean", "Neighborhood mean", "Basis OLS"),
+    role = c("baseline", "baseline", "benchmark"),
+    prediction_column = c(
+      "global_mean", "neighborhood_mean", "basis_ols"
+    )
+  )
+  baseline_rows <- purrr::map_dfr(
+    seq_len(nrow(baseline_specs)),
+    function(i) {
+      predicted <- predictions[[baseline_specs$prediction_column[i]]]
+      metrics <- metric_frame(
+        predictions$actual,
+        predicted,
+        baseline_specs$model[i]
+      )
+      tibble::tibble(
+        model = baseline_specs$model[i],
+        role = baseline_specs$role[i],
+        selected_by_cv = FALSE,
+        selected_lambda = NA_real_,
+        mean_cv_rmse = NA_real_,
+        sd_cv_rmse = NA_real_,
+        test_mae = metrics$MAE,
+        test_rmse = metrics$RMSE,
+        test_r2 = metrics$R2,
+        test_total_bias = calculate_total_bias(
+          predictions$actual,
+          predicted
+        )
+      )
+    }
+  )
+  candidate_rows <- purrr::map_dfr(
+    model_fit$candidate_fits,
+    function(candidate) {
+      best <- candidate$cv$summary[
+        which.min(candidate$cv$summary$mean_rmse),
+      ]
+      metrics <- candidate$metrics
+      tibble::tibble(
+        model = candidate$model,
+        role = "candidate",
+        selected_by_cv = candidate$model == model_fit$primary_model,
+        selected_lambda = candidate$selected_lambda,
+        mean_cv_rmse = best$mean_rmse,
+        sd_cv_rmse = best$sd_rmse,
+        test_mae = metrics$MAE,
+        test_rmse = metrics$RMSE,
+        test_r2 = metrics$R2,
+        test_total_bias = calculate_total_bias(
+          predictions$actual,
+          candidate$prediction
+        )
+      )
+    }
+  )
+  summary <- dplyr::bind_rows(baseline_rows, candidate_rows)
+  selected <- summary$model[summary$selected_by_cv]
+  if (length(selected) != 1L || !identical(selected, model_fit$primary_model)) {
+    stop("Model summary must identify exactly one primary model", call. = FALSE)
+  }
+  summary
+}
+
 save_stacked_plots <- function(
     top,
     bottom,
