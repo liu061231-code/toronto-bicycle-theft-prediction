@@ -1,8 +1,8 @@
 metric,value
 rows,40524
-original_columns,8
-missing_cells,2647
-exact_duplicate_rows,1923
+input_columns,12
+missing_model_cells,2647
+duplicate_rows_on_model_columns,1923
 neighborhoods,141
 unique_dates,4363
 quarter_mismatch_rows,0
@@ -10,3 +10,7 @@ zero_or_negative_bike_cost,1925
 bike_cost_over_10000,67
 unknown_area_rows,370
 zero_coordinate_rows,359
+duplicate_full_rows,0
+distinct_objectid,40524
+distinct_event_unique_id,36398
+late_report_rows,26394

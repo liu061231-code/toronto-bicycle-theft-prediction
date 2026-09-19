@@ -52,6 +52,7 @@ make_rolling_folds <- function(
   if (is.null(first_test_index)) {
     first_test_index <- min_index + min_train_months
   }
+  if (first_test_index > max_index - horizon_months + 1L) return(list())
   starts <- seq(
     first_test_index, max_index - horizon_months + 1L, by = step_months
   )

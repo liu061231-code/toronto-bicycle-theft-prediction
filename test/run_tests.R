@@ -1,13 +1,13 @@
 # Run all tests. Execute from the project root with:
 #   Rscript test/run_tests.R
 #
-# This runner sources test_helper.R (which loads the pipeline modules) and then
-# runs every test file in this directory.
+# This runner loads pipeline modules once; individual tests source helper.R
+# for synthetic fixtures.
 
 test_root <- normalizePath(dirname(
-  sub("^--file=", "", commandArgs(trailingOnly = FALSE)[
+  gsub("~+~", " ", sub("^--file=", "", commandArgs(trailingOnly = FALSE)[
     grep("^--file=", commandArgs(trailingOnly = FALSE))
-  ][1])
+  ][1]), fixed=TRUE)
 ), mustWork = TRUE)
 
 # Load the shared helper in this environment so TEST_ROOT is available.
@@ -27,6 +27,7 @@ source(file.path(TEST_ROOT, "src", "validation.R"))
 source(file.path(TEST_ROOT, "src", "models.R"))
 source(file.path(TEST_ROOT, "src", "evaluate.R"))
 source(file.path(TEST_ROOT, "src", "backtest.R"))
+source(file.path(TEST_ROOT, "src", "artifacts.R"))
 
 # The helper's own source() of modules is idempotent; re-sourcing is fine.
 testthat::test_dir(test_root, reporter = "summary")

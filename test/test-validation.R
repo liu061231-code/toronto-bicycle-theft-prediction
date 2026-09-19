@@ -2,7 +2,7 @@
 # Tests for the expanding-window CV fold builder and time-aware splitting,
 # including the relative-time-start fix and short-series boundary behaviour.
 
-source(file.path(TEST_ROOT, "test", "test_helper.R"))
+source(file.path(TEST_ROOT, "test", "helper.R"))
 
 make_panel_subset <- function(start_index, n_months) {
   tibble::tibble(

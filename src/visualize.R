@@ -86,7 +86,7 @@ plot_spatial_hotspots <- function(panel) {
     project_theme()
 }
 
-# Final model: observed vs predicted on the hold-out test set.
+# Selected model: observed vs predicted in the 2025 retrospective window.
 plot_observed_vs_predicted <- function(predictions) {
   ggplot2::ggplot(
     predictions, ggplot2::aes(predicted, actual)
@@ -96,9 +96,9 @@ plot_observed_vs_predicted <- function(predictions) {
     ggplot2::geom_point(alpha = 0.35, size = 1.6, color = "#1B4965") +
     ggplot2::coord_equal() +
     ggplot2::labs(
-      title = "Observed vs predicted theft counts (2025 hold-out)",
+      title = "Observed vs predicted (2025 retrospective)",
       subtitle = "Each point is one neighbourhood-month; the solid line is perfect prediction",
-      x = "Predicted thefts", y = "Observed thefts"
+      x = "Predicted record rows", y = "Observed record rows"
     ) +
     project_theme()
 }
@@ -113,7 +113,7 @@ plot_residual_distribution <- function(predictions) {
     ggplot2::labs(
       title = "Distribution of prediction residuals (2025)",
       subtitle = "Residual = observed \u2212 predicted; centred near zero indicates low bias",
-      x = "Residual (thefts)", y = "Count"
+      x = "Residual (record rows)", y = "Count"
     ) +
     project_theme()
 }

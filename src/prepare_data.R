@@ -19,8 +19,18 @@
 # a single (0,0) point dominates the spatial scale and collapses the map.
 UNKNOWN_AREA <- "NSA"
 
+# Availability filter, not a reconstruction of historical revisions.
+# Missing report dates cannot establish that a record was known at cutoff.
+records_as_of <- function(raw, cutoff) {
+  if(!"report_date" %in% names(raw)) stop("report_date is required for as-of filtering")
+  cutoff <- as.Date(cutoff)
+  report <- as.Date(raw$report_date)
+  raw[!is.na(report) & report<=cutoff & raw$date<=cutoff, ,drop=FALSE]
+}
+
 # Read the raw CSV and validate its schema, then parse date columns.
 read_bicycle <- function(path) {
+  validate_conversion(path)
   x <- readr::read_csv(path, show_col_types = FALSE, na = c("", "NA"))
   if (!all(raw_columns %in% names(x))) {
     stop(
@@ -42,18 +52,33 @@ read_bicycle <- function(path) {
     )
 }
 
+validate_conversion <- function(path) {
+  dir <- dirname(path)
+  if(file.exists(file.path(dir,".conversion-in-progress"))) stop("Conversion incomplete; rerun convert_data.py")
+  manifest <- file.path(dir,"conversion_manifest.json")
+  if(file.exists(manifest)) {
+    hashes <- jsonlite::read_json(manifest,simplifyVector=TRUE)
+    for(name in names(hashes)) {
+      file <- file.path(dir,name)
+      if(!file.exists(file) || digest::digest(file=file,algo="sha256") != hashes[[name]])
+        stop("Converted data hash mismatch: ",name)
+    }
+  }
+  invisible(TRUE)
+}
+
 # Produce a small audit table summarising basic data-quality indicators.
 audit_bicycle <- function(raw) {
   tibble::tibble(
     metric = c(
-      "rows", "original_columns", "missing_cells", "exact_duplicate_rows",
+      "rows", "input_columns", "missing_model_cells", "duplicate_rows_on_model_columns",
       "neighborhoods", "unique_dates", "quarter_mismatch_rows",
       "zero_or_negative_bike_cost", "bike_cost_over_10000",
       "unknown_area_rows", "zero_coordinate_rows"
     ),
     value = c(
       nrow(raw),
-      length(raw_columns),
+      ncol(raw) - sum(c("derived_quarter", "supplied_quarter_date", "supplied_quarter") %in% names(raw)),
       sum(is.na(raw[, raw_columns])),
       sum(duplicated(raw[, raw_columns])),
       dplyr::n_distinct(raw$neighborhood),
@@ -68,7 +93,13 @@ audit_bicycle <- function(raw) {
         na.rm = TRUE
       )
     )
-  )
+  ) |>
+    dplyr::bind_rows(tibble::tibble(
+      metric=c("duplicate_full_rows", "distinct_objectid", "distinct_event_unique_id", "late_report_rows"),
+      value=c(sum(duplicated(raw)),
+        if("objectid" %in% names(raw)) dplyr::n_distinct(raw$objectid, na.rm=TRUE) else NA,
+        if("event_unique_id" %in% names(raw)) dplyr::n_distinct(raw$event_unique_id, na.rm=TRUE) else NA,
+        if("report_date" %in% names(raw)) sum(as.Date(raw$report_date)>raw$date, na.rm=TRUE) else NA)))
 }
 
 # The study period: from the first stable reporting year (2014) through the
@@ -158,6 +189,13 @@ make_monthly_panel <- function(raw, coordinates = NULL) {
   if (is.null(coordinates)) {
     coordinates <- load_reference_coordinates()
   }
+  # A future-only area must not add zero rows to every historical month.
+  # The versioned reference defines the closed geography; unfamiliar labels
+  # are reconciled into the existing unknown bucket.
+  roster <- union(coordinates$neighborhood, UNKNOWN_AREA)
+  unknown <- is.na(raw$neighborhood) | !raw$neighborhood %in% roster
+  if(any(unknown)) warning("Labels missing from the coordinate reference mapped to NSA")
+  raw$neighborhood[unknown] <- UNKNOWN_AREA
 
   months <- seq(
     as.Date(sprintf("%d-01-01", START_YEAR)),
@@ -181,7 +219,7 @@ make_monthly_panel <- function(raw, coordinates = NULL) {
 
   panel <- counts |>
     tidyr::complete(
-      neighborhood = unique(raw$neighborhood),
+      neighborhood = roster,
       month = months,
       fill = list(
         theft_count = 0L, outside_share = 0, commercial_share = 0

@@ -3,7 +3,7 @@
 #
 # This module ties the validation and model modules together: it runs every
 # candidate (baselines and models) through the same expanding-window CV, then
-# produces a final hold-out evaluation on the untouched 2023 test set.
+# produces a descriptive retrospective evaluation on 2025.
 
 # Run a named set of models through expanding-window CV and return per-fold
 # metrics for each model. `models` is a named list of `fit_predict`
@@ -35,9 +35,9 @@ summarise_cv <- function(cv_results) {
     dplyr::arrange(cv_RMSE)
 }
 
-# Fit a model on train+validation and evaluate on the final hold-out test
-# set. `fit_predict` receives the combined train+validation data and the
-# test data.
+# Fit a model on train+validation and evaluate on the 2025 retrospective
+# window. `fit_predict` receives the combined train+validation data and the
+# retrospective data.
 final_holdout_evaluate <- function(
     train_data, validation_data, test_data, fit_predict, model_name) {
   train_val <- dplyr::bind_rows(train_data, validation_data)
@@ -49,8 +49,8 @@ final_holdout_evaluate <- function(
   )
 }
 
-# Produce the final model comparison table: CV performance plus hold-out
-# test performance side by side. Rows without a CV entry (e.g. the tuned
+# Produce the final model comparison table: CV performance plus retrospective
+# performance side by side. Rows without a CV entry (e.g. the tuned
 # final model) keep their own cv_* values if already present, otherwise NA.
 build_comparison_table <- function(cv_summary, holdout_results) {
   # Strip any cv_* columns from holdout_results to avoid name collisions,
@@ -81,10 +81,17 @@ build_comparison_table <- function(cv_summary, holdout_results) {
 # Summarise the final model's aggregate and stratified errors so the report is
 # not reduced to a single R². `predictions` must contain `month`,
 # `neighborhood`, `actual`, and `predicted` columns.
+safe_relative_bias <- function(predicted, actual) {
+  out <- rep(NA_real_, length(actual))
+  ok <- is.finite(actual) & actual != 0
+  out[ok] <- (predicted[ok] - actual[ok]) / actual[ok]
+  out
+}
+
 summarise_forecast_errors <- function(predictions) {
   total_actual <- sum(predictions$actual)
   total_pred <- sum(predictions$predicted)
-  total_rel_bias <- (total_pred - total_actual) / total_actual
+  total_rel_bias <- safe_relative_bias(total_pred, total_actual)
 
   # Monthly citywide totals (aggregate error by month).
   monthly <- predictions |>
@@ -93,7 +100,7 @@ summarise_forecast_errors <- function(predictions) {
     dplyr::summarise(
       actual = sum(actual), predicted = sum(predicted), .groups = "drop"
     ) |>
-    dplyr::mutate(rel_bias = (predicted - actual) / actual)
+    dplyr::mutate(rel_bias = safe_relative_bias(predicted, actual))
 
   # Non-zero sample error (months where actual > 0).
   nonzero <- dplyr::filter(predictions, actual > 0)
@@ -114,7 +121,7 @@ summarise_forecast_errors <- function(predictions) {
     dplyr::summarise(
       actual_total = sum(actual),
       predicted_total = sum(predicted),
-      rel_bias = (sum(predicted) - sum(actual)) / sum(actual),
+      rel_bias = safe_relative_bias(sum(predicted), sum(actual)),
       .groups = "drop"
     )
 

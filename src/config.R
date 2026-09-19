@@ -58,8 +58,9 @@ digest_file <- function(path) {
 # Declare all R packages used by the project so a fresh environment can be
 # set up in one place (see README "Reproducibility").
 required_packages <- c(
-  "dplyr", "tidyr", "readr", "purrr", "tibble", "stringr", "forcats",
-  "lubridate", "ggplot2", "scales", "splines", "glmnet", "MASS", "mgcv"
+  "dplyr", "tidyr", "readr", "tibble", "lubridate", "ggplot2", "scales",
+  "splines", "glmnet", "MASS",
+  "digest", "jsonlite", "testthat"
 )
 
 # Read package names from requirements.txt, correctly skipping comment lines

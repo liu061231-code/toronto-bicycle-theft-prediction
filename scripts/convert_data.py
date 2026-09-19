@@ -11,12 +11,18 @@ Output:
                                      division) for daily/hourly modelling
 """
 import csv
+import os
+import tempfile
+import hashlib
+import json
+from pathlib import Path
 from datetime import datetime, date, timezone
 from collections import Counter
 
-SRC = "data/raw/bicycle_raw_latest.csv"
-DST_LEGACY = "data/raw/bicycle.csv"
-DST_ENHANCED = "data/raw/bicycle_enhanced.csv"
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "data/raw/bicycle_raw_latest.csv"
+DST_LEGACY = ROOT / "data/raw/bicycle.csv"
+DST_ENHANCED = ROOT / "data/raw/bicycle_enhanced.csv"
 
 # Map PREMISES_TYPE -> the legacy "location" coarse category.
 PREMISES_TO_LOCATION = {
@@ -47,7 +53,16 @@ def parse_date(s):
     return None
 
 def main():
-    rows = list(csv.DictReader(open(SRC, encoding="utf-8")))
+    with open(SRC, encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        required = {"OBJECTID", "EVENT_UNIQUE_ID", "OCC_DATE", "REPORT_DATE",
+                    "NEIGHBOURHOOD_140", "LONG_WGS84", "LAT_WGS84", "OCC_HOUR", "PREMISES_TYPE"}
+        if not required.issubset(reader.fieldnames or []):
+            raise ValueError("Missing required conversion columns")
+        rows = list(reader)
+    ids = [r["OBJECTID"] for r in rows]
+    if not rows or any(not i for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError("Empty input, missing or duplicate OBJECTID")
 
     legacy_rows = []
     enhanced_rows = []
@@ -57,6 +72,9 @@ def main():
 
     for r in rows:
         occ_date = parse_date(r.get("OCC_DATE"))
+        report_date = parse_date(r.get("REPORT_DATE"))
+        if r.get("REPORT_DATE") and report_date is None:
+            raise ValueError("Invalid REPORT_DATE")
         if occ_date is None:
             skipped += 1
             continue
@@ -83,6 +101,8 @@ def main():
             "objectid": object_ids[-1],
             "event_unique_id": event_ids[-1],
             "date": occ_date.isoformat(),
+            "occ_date": occ_date.isoformat(),
+            "report_date": report_date.isoformat() if report_date else "",
             "quarter": occ_date.isoformat(),  # placeholder; derived in R
             "day_of_week": occ_date.strftime("%A"),
             "neighborhood": neighborhood,
@@ -97,6 +117,8 @@ def main():
             "objectid": object_ids[-1],
             "event_unique_id": event_ids[-1],
             "date": occ_date.isoformat(),
+            "occ_date": occ_date.isoformat(),
+            "report_date": report_date.isoformat() if report_date else "",
             "neighborhood": neighborhood,
             "long": lon,
             "lat": lat,
@@ -108,22 +130,66 @@ def main():
             "hour": hour,
         })
 
+    if not legacy_rows:
+        raise ValueError("No usable occurrence records")
+    marker = Path(DST_LEGACY).parent / ".conversion-in-progress"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("Conversion in progress; readers must wait or rerun conversion.\n")
+    staged = []
     def write(path, fieldnames, data):
-        with open(path, "w", newline="", encoding="utf-8") as fh:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".convert_")
+        staged.append((path, Path(tmp)))
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=fieldnames)
             w.writeheader()
             w.writerows(data)
 
     write(DST_LEGACY,
-          ["objectid", "event_unique_id", "date", "quarter", "day_of_week",
+          ["objectid", "event_unique_id", "date", "occ_date", "report_date", "quarter", "day_of_week",
            "neighborhood", "bike_cost", "location", "long", "lat"],
           legacy_rows)
 
     write(DST_ENHANCED,
-          ["objectid", "event_unique_id", "date", "neighborhood", "long",
+          ["objectid", "event_unique_id", "date", "occ_date", "report_date", "neighborhood", "long",
            "lat", "bike_cost", "premises_type", "location_type", "location",
            "division", "hour"],
           enhanced_rows)
+
+    # Stage both outputs first. Retain prior generations and roll back ordinary
+    # replacement failures. Two separate paths cannot be crash-atomic as a pair.
+    import shutil
+    backups = {}
+    replaced = []
+    try:
+        for path, tmp in staged:
+            if path.exists():
+                backup = path.with_suffix(path.suffix + ".previous")
+                shutil.copy2(path, backup)
+                backups[path] = backup
+        for path, tmp in staged:
+            os.replace(tmp, path)
+            replaced.append(path)
+        manifest = {str(path.name): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path, tmp in staged}
+        manifest_path = marker.parent / "conversion_manifest.json"
+        fd, temp_manifest = tempfile.mkstemp(dir=marker.parent, prefix=".manifest_")
+        with os.fdopen(fd,"w") as f:
+            json.dump(manifest,f,indent=2)
+        os.replace(temp_manifest,manifest_path)
+        marker.unlink()
+    except BaseException:
+        for path in replaced:
+            if path in backups:
+                shutil.copy2(backups[path], path)
+            else:
+                path.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
+        raise
+    finally:
+        for path, tmp in staged:
+            tmp.unlink(missing_ok=True)
 
     print(f"rows processed : {len(rows)}")
     print(f"rows kept      : {len(legacy_rows)}")

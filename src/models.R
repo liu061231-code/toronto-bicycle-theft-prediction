@@ -11,10 +11,14 @@
 # --- Regression metrics (used by all models and baselines) ---------------
 
 regression_metrics <- function(actual, predicted) {
+  if (length(actual) != length(predicted)) stop("Prediction length mismatch")
+  if (!length(actual)) return(list(MAE=NA_real_, RMSE=NA_real_, R2=NA_real_))
+  if (any(!is.finite(actual)) || any(!is.finite(predicted))) stop("Non-finite prediction or target")
   residual <- actual - predicted
   mae <- mean(abs(residual))
   rmse <- sqrt(mean(residual^2))
-  r2 <- 1 - sum(residual^2) / sum((actual - mean(actual))^2)
+  denom <- sum((actual - mean(actual))^2)
+  r2 <- if (denom > 0) 1 - sum(residual^2) / denom else NA_real_
   list(MAE = mae, RMSE = rmse, R2 = r2)
 }
 
@@ -60,7 +64,7 @@ baseline_seasonal_naive <- function(train_data, test_data) {
 # Recent-window seasonal mean: for each neighbourhood, the mean of the most
 # recent `window_months` months of training data. This is a realistic
 # deployment baseline that adapts to the recent level (and thus to the ongoing
-# decline) far better than a full-history mean. Added for a fair, actionable
+# decline) far better than a full-history mean. Added for a fair operational
 # comparison (handoff 4.A).
 baseline_recent_seasonal_mean <- function(window_months = 12) {
   force(window_months)
@@ -178,6 +182,7 @@ model_poisson_glm <- function(alpha = 0, lambda, with_area = TRUE) {
     fit <- .glmnet_poisson_fit(
       x_train, train_data$theft_count, alpha, lambda
     )
+    if(!signif(lambda,8) %in% signif(fit$lambda,8)) stop("Requested Poisson lambda did not converge")
     as.numeric(predict(fit, newx = x_test, s = lambda, type = "response"))
   }
 }
@@ -197,8 +202,9 @@ model_negbin_glm <- function(with_area = FALSE) {
     x_test <- make_glm_design_matrix(test_data, recipe, with_area = with_area)
     df_train <- as.data.frame(x_train)
     df_train$theft_count <- train_data$theft_count
-    # Capture convergence warnings so failures are not silently averaged away.
+    # Fail explicitly if this exploratory comparator does not converge.
     fit <- MASS::glm.nb(theft_count ~ . - 1, data = df_train)
+    if(!isTRUE(fit$converged)) stop("Negative-binomial did not converge")
     as.numeric(predict(fit, newdata = as.data.frame(x_test), type = "response"))
   }
 }

@@ -7,7 +7,7 @@
 # table, mirroring the frozen data/reference/neighborhood_coordinates.csv
 # used in production.
 
-source(file.path(TEST_ROOT, "test", "test_helper.R"))
+source(file.path(TEST_ROOT, "test", "helper.R"))
 
 # Build a panel from synthetic raw with an explicit synthetic reference
 # table (the test-fixture analogue of the frozen production reference).
@@ -44,7 +44,7 @@ test_that("zero-coordinate records do not enter the coordinate table", {
   raw <- make_synthetic_raw(n_neighborhoods = 3, n_years = 2, with_nsa = FALSE)
   raw$long[raw$neighborhood == "Area1"] <- 0
   raw$lat[raw$neighborhood == "Area1"] <- 0
-  prepared <- make_test_panel(raw)
+  expect_warning(prepared <- make_test_panel(raw), "missing from the coordinate")
   expect_false("Area1" %in% prepared$coordinates$neighborhood)
 })
 
@@ -94,6 +94,7 @@ test_that("the production reference table covers all non-NSA neighbourhoods", {
   # and cover every non-NSA neighbourhood in the real raw data, with sane
   # Toronto coordinates.
   paths <- project_paths(file.path(TEST_ROOT))
+  skip_if_not(file.exists(paths$raw_data), "Local snapshot not redistributed")
   ref <- load_reference_coordinates(paths$reference_coordinates)
   raw <- read_bicycle(paths$raw_data)
   real_nb <- setdiff(unique(raw$neighborhood), "NSA")

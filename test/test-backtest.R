@@ -4,7 +4,7 @@
 # the output schema carries the required columns; selection follows the
 # predeclared rule; the 2025 window never participates in selection.
 
-source(file.path(TEST_ROOT, "test", "test_helper.R"))
+source(file.path(TEST_ROOT, "test", "helper.R"))
 
 toy_panel_bt <- function() {
   raw <- make_synthetic_raw(n_neighborhoods = 4, n_years = 7, with_nsa = TRUE)

@@ -27,7 +27,7 @@ script_path <- (function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- args[grepl("^--file=", args)]
   if (length(file_arg)) {
-    return(normalizePath(sub("^--file=", "", file_arg[1])))
+    return(normalizePath(gsub("~+~", " ", sub("^--file=", "", file_arg[1]), fixed=TRUE)))
   }
   normalizePath(getwd())
 })()
@@ -41,6 +41,7 @@ source(file.path(ROOT, "src", "models.R"))
 source(file.path(ROOT, "src", "evaluate.R"))
 source(file.path(ROOT, "src", "backtest.R"))
 source(file.path(ROOT, "src", "visualize.R"))
+source(file.path(ROOT, "src", "artifacts.R"))
 
 main <- function() {
   paths <- project_paths(ROOT)
@@ -56,7 +57,7 @@ main <- function() {
   data_hash <- digest_file(paths$raw_data)
 
   message("2/7 Building monthly panel ...")
-  prepared <- make_monthly_panel(raw)
+  prepared <- make_monthly_panel(raw, load_reference_coordinates(paths$reference_coordinates))
   panel <- prepared$panel
 
   message("3/7 Splitting data (time-aware) ...")
@@ -132,11 +133,13 @@ main <- function() {
 
   # Consolidate the per-outer-fold tuning audit trail.
   tuning_traces <- dplyr::bind_rows(trace_env$traces)
-  outer_ids <- sort(unique(tuning_traces$outer_train_end))
   tuning_traces <- tuning_traces |>
-    dplyr::mutate(outer_fold = match(outer_train_end, outer_ids)) |>
+    dplyr::group_by(model, task_horizon) |>
+    dplyr::mutate(outer_fold = match(outer_train_end, sort(unique(outer_train_end)))) |>
+    dplyr::ungroup() |>
     dplyr::select(
-      outer_fold, model, inner_fold, lambda, MAE, RMSE, R2, selected
+      task_horizon, outer_fold, model, outer_train_end, test_start, test_end,
+      inner_fold, lambda, MAE, RMSE, R2, status, selected
     ) |>
     dplyr::arrange(model, outer_fold, inner_fold, lambda)
 
@@ -168,10 +171,16 @@ main <- function() {
                                 path_model = poisson_path_model(
                                   alpha = 0, with_area = TRUE))
   )
+  retrospective_predictions <- list()
+  retrospective_lambdas <- list()
   retrospective <- dplyr::bind_rows(lapply(names(models), function(nm) {
     fp <- if (nm %in% names(final_wrappers)) final_wrappers[[nm]]
           else models[[nm]]
     pred <- fp(train_val, test)
+    retrospective_predictions[[nm]] <<- pred
+    if (nm %in% names(final_wrappers)) {
+      retrospective_lambdas[[nm]] <<- final_trace_env$last_lambda
+    }
     fm <- backtest_fold_metrics(test, pred)
     fm |>
       dplyr::mutate(
@@ -185,9 +194,10 @@ main <- function() {
     dplyr::arrange(RMSE)
 
   final_traces <- dplyr::bind_rows(final_trace_env$traces) |>
-    dplyr::mutate(outer_fold = "retrospective_refit") |>
+    dplyr::mutate(outer_fold = "retrospective_refit", task_horizon = 12L) |>
     dplyr::select(
-      outer_fold, model, inner_fold, lambda, MAE, RMSE, R2, selected
+      task_horizon, outer_fold, model, outer_train_end, test_start, test_end,
+      inner_fold, lambda, MAE, RMSE, R2, status, selected
     )
   tuning_traces <- dplyr::bind_rows(
     tuning_traces |> dplyr::mutate(outer_fold = as.character(outer_fold)),
@@ -197,13 +207,21 @@ main <- function() {
   # Predictions on the 2025 retrospective window for the selected model of
   # each horizon (if the horizons agree, one set is produced once).
   selected_models <- unique(c(selected_h12, selected_h1))
+  artifacts <- list()
   prediction_sets <- lapply(selected_models, function(nm) {
-    fp <- if (nm %in% names(final_wrappers)) final_wrappers[[nm]]
-          else models[[nm]]
-    pred <- fp(train_val, test)
+    lam <- if(nm %in% names(final_wrappers)) retrospective_lambdas[[nm]] else NA_real_
+    artifact <- fit_artifact(train_val,nm,lam,data_hash=data_hash,
+      reference_hash=digest_file(paths$reference_coordinates),
+      intended_horizons=c(if(nm==selected_h1) 1L, if(nm==selected_h12) 12L))
+    artifacts[[nm]] <<- artifact
+    pred <- retrospective_predictions[[nm]]
+    stopifnot(isTRUE(all.equal(pred, predict_artifact(artifact, test))))
     test |>
       dplyr::transmute(
         model_id = nm,
+        training_cutoff = artifact$training_cutoff,
+        lambda = lam,
+        data_hash = data_hash,
         month = as.Date(month),
         neighborhood,
         lon, lat,
@@ -215,7 +233,9 @@ main <- function() {
   names(prediction_sets) <- selected_models
   error_reports <- lapply(prediction_sets, summarise_forecast_errors)
 
-  message("7/7 Writing outputs and figures ...")
+  message("7/7 Writing outputs, artifacts, correction experiment and figures ...")
+  corrections <- correction_backtest(train_val,folds_h12,lambda_grid)
+  readr::write_csv(corrections,file.path(paths$table_dir,"backtransform_corrections.csv"))
   readr::write_csv(audit, file.path(paths$table_dir, "data_audit.csv"))
   readr::write_csv(
     backtest_results, file.path(paths$table_dir, "backtest_folds.csv")
@@ -231,6 +251,9 @@ main <- function() {
   )
   for (nm in selected_models) {
     slug <- gsub("[^A-Za-z0-9]+", "_", tolower(nm))
+    save_artifact(artifacts[[nm]],file.path(paths$model_dir,paste0(slug,".rds")))
+    restored <- readRDS(file.path(paths$model_dir,paste0(slug,".rds")))
+    stopifnot(isTRUE(all.equal(predict_artifact(restored,test),prediction_sets[[nm]]$predicted)))
     readr::write_csv(
       prediction_sets[[nm]],
       file.path(paths$table_dir, paste0("predictions_", slug, ".csv"))
@@ -265,14 +288,14 @@ main <- function() {
       file.path(
         paths$figure_dir, paste0("04_observed_vs_predicted_", slug, ".png")
       ),
-      plot_observed_vs_predicted(prediction_sets[[nm]]),
+      plot_observed_vs_predicted(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm,"| 2025 annual-batch retrospective")),
       width = 9, height = 5.4, dpi = 180, bg = "white"
     )
     ggplot2::ggsave(
       file.path(
         paths$figure_dir, paste0("05_residual_distribution_", slug, ".png")
       ),
-      plot_residual_distribution(prediction_sets[[nm]]),
+      plot_residual_distribution(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm,"| 2025 annual-batch retrospective")),
       width = 9, height = 5.4, dpi = 180, bg = "white"
     )
   }
@@ -289,6 +312,15 @@ main <- function() {
     ))
   }
 
+  files <- c(list.files(paths$table_dir,full.names=TRUE),list.files(paths$figure_dir,full.names=TRUE),
+    list.files(paths$model_dir,full.names=TRUE))
+  files <- substring(files, nchar(paths$root) + 2L)
+  manifest <- list(generated_at=format(Sys.time(),tz="UTC"),data_hash=data_hash,
+    reference_hash=digest_file(paths$reference_coordinates),
+    selected_h1=selected_h1,selected_h12=selected_h12,
+    retrospective_protocol="Fit through 2024; predict all 12 months of 2025 without updating",
+    files=files, session_info=capture.output(sessionInfo()))
+  jsonlite::write_json(manifest,file.path(paths$root,"output","run_manifest.json"),pretty=TRUE,auto_unbox=TRUE)
   invisible(list(
     paths = paths,
     audit = audit,

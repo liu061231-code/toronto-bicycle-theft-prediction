@@ -1,4 +1,4 @@
-# test_helper.R -----------------------------------------------------------
+# helper.R ----------------------------------------------------------------
 # Pure helpers for the project test suite: builds synthetic data and exposes
 # small utilities. It does NOT locate the project root or source modules —
 # run_tests.R does that once and sets TEST_ROOT in the global environment.

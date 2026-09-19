@@ -4,14 +4,17 @@
 # each outer training window, using the same grid, metric and tie-break for
 # every tuned model. Random K-fold (e.g. bare cv.glmnet) is not allowed.
 
-source(file.path(TEST_ROOT, "test", "test_helper.R"))
+source(file.path(TEST_ROOT, "test", "helper.R"))
 
 # A synthetic panel long enough for inner time CV (6 area-units x 6 years).
 toy_panel <- function() {
   raw <- make_synthetic_raw(n_neighborhoods = 5, n_years = 6, with_nsa = TRUE)
-  make_monthly_panel(
+  panel <- make_monthly_panel(
     raw, coordinates = make_neighborhood_coordinates(raw)
   )$panel
+  # Real variation is necessary: the raw helper creates one event per cell.
+  panel$theft_count <- (seq_len(nrow(panel))*7 + panel$time_index) %% 9
+  panel
 }
 
 ridge_factory <- function(lambda) model_ridge_log(lambda = lambda)

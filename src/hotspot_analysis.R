@@ -3,7 +3,7 @@
 #
 # This is the "operational extension" of the monthly prediction model. It
 # uses the fine-grained OCC_HOUR and PREMISES_TYPE fields (only present in
-# the refreshed official dataset) to answer a directly actionable question:
+# the refreshed official dataset) for a descriptive question:
 #
 #   "At which hours of the day, and in which types of premises, are bicycle
 #    thefts most likely?"
@@ -24,22 +24,24 @@ script_path <- (function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- args[grepl("^--file=", args)]
   if (length(file_arg)) {
-    return(normalizePath(sub("^--file=", "", file_arg[1])))
+    return(normalizePath(gsub("~+~", " ", sub("^--file=", "", file_arg[1]), fixed=TRUE)))
   }
   normalizePath(getwd())
 })()
 ROOT <- normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
 source(file.path(ROOT, "src", "config.R"))
+source(file.path(ROOT, "src", "prepare_data.R"))
 
 # --- Load the enhanced dataset ------------------------------------------
 load_enhanced <- function(path) {
+  validate_conversion(path)
   readr::read_csv(path, show_col_types = FALSE, na = c("", "NA")) |>
     dplyr::mutate(
       date = as.Date(date),
       hour = as.integer(hour),
       year = lubridate::year(date)
     ) |>
-    dplyr::filter(hour >= 0, hour <= 23, year >= 2014)
+    dplyr::filter(hour >= 0, hour <= 23, year >= 2014, year <= 2025)
 }
 
 project_theme <- function() {
@@ -58,9 +60,9 @@ plot_hourly_pattern <- function(d) {
     ggplot2::geom_col(fill = "#1B4965", width = 0.85) +
     ggplot2::scale_x_continuous(breaks = seq(0, 23, by = 2)) +
     ggplot2::labs(
-      title = "Bicycle thefts by hour of day (2014\u20132025)",
-      subtitle = "Peaks at midnight and the evening commute; a trough before dawn",
-      x = "Hour of day", y = "Reported thefts"
+      title = "Bicycle-theft records by hour of day (2014\u20132025)",
+      subtitle = "Occurrence-hour record counts; descriptive, not an intervention-effect estimate",
+      x = "Hour of day", y = "Published record rows"
     ) +
     project_theme()
 }
@@ -94,7 +96,8 @@ plot_premises_by_period <- function(d) {
 }
 
 main <- function() {
-  paths <- project_paths()
+  paths <- project_paths(ROOT)
+  dir.create(paths$figure_dir, recursive=TRUE, showWarnings=FALSE)
   d <- load_enhanced(paths$enhanced_data)
 
   ggplot2::ggsave(

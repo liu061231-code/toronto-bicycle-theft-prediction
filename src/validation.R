@@ -5,7 +5,7 @@
 # a clear annual cycle). A random train/test split would leak future
 # information into training, so all validation is chronological:
 #
-#   - final hold-out test set  = calendar year 2025
+#   - descriptive retrospective window = calendar year 2025
 #   - expanding-window CV      = hyperparameter selection on 2014-2024 only
 #
 # Expanding-window CV trains on all data up to a cutoff and evaluates on the
@@ -19,7 +19,7 @@
 #   train      = 2014-2023
 #   validation = 2024
 #   test       = 2025
-# The final test set is a full, untouched recent year; validation is used
+# The retrospective set is a repeatedly viewed recent year; validation is used
 # only for the tuned model's hyperparameter selection via CV on train+val.
 split_panel <- function(panel) {
   list(
@@ -52,7 +52,7 @@ make_expanding_folds <- function(
 
   # Guard against a series shorter than the initial window, which would make
   # `seq()` emit "wrong sign in 'by' argument" and produce no folds.
-  if (n_months <= initial_months) {
+  if (n_months < initial_months + horizon_months) {
     return(list())
   }
 
@@ -161,45 +161,24 @@ tune_lambda_time_cv <- function(
         path_model$fit(tr, lambda_grid),
         error = function(e) NULL
       )
-      # Evaluate ONLY the declared candidate grid. A path fit may carry a
-      # much longer internal lambda sequence (warm-start path); restrict to
-      # the requested values the solver actually reached. Values the solver
-      # did not reach are dropped for this fold (with a warning) and the
-      # aggregates average over the folds where they exist.
+      # Evaluate the complete declared grid on every fold. Unreached solver
+      # values receive infinite error, so they cannot win by being evaluated
+      # on fewer or easier folds.
       avail <- if (!is.null(fitted)) fitted$fit$lambda else numeric(0)
       avail <- avail[is.finite(avail)]
       # Match by significant digits to be robust to solver float round-trip.
       avail <- lambda_grid[signif(lambda_grid, 8) %in% signif(avail, 8)]
-      if (length(avail) == 0L) {
-        # Degenerate window (e.g. tiny synthetic data): fall back to
-        # per-lambda fits, which return the closest converged solution.
-        warning(
-          "inner fold ", i, ": path fit unusable; falling back to ",
-          "per-lambda fits for this fold"
-        )
-        return(dplyr::bind_rows(lapply(lambda_grid, function(lam) {
-          pred <- model_factory(lam)(tr, te)
-          m <- regression_metrics(te$theft_count, pred)
-          tibble::tibble(
-            inner_fold = i, lambda = lam,
-            MAE = m$MAE, RMSE = m$RMSE, R2 = m$R2
-          )
-        })))
-      }
-      if (length(avail) < length(lambda_grid)) {
-        warning(
-          "inner fold ", i, ": glmnet reached ", length(avail), " of ",
-          length(lambda_grid), " requested lambdas; the rest are dropped ",
-          "for this fold"
-        )
-      }
-      x_te <- path_model$build_x(fitted$recipe, te)
-      dplyr::bind_rows(lapply(avail, function(lam) {
-        pred <- path_model$predict_x(fitted, x_te, lam)
-        m <- regression_metrics(te$theft_count, pred)
+      x_te <- if(length(avail)) path_model$build_x(fitted$recipe, te) else NULL
+      dplyr::bind_rows(lapply(lambda_grid, function(lam) {
+        result <- tryCatch({
+          if (!lam %in% avail) stop("lambda_not_converged")
+          pred <- path_model$predict_x(fitted, x_te, lam)
+          list(m=regression_metrics(te$theft_count, pred), status="ok")
+        }, error=function(e) list(m=list(MAE=Inf, RMSE=Inf, R2=NA_real_), status=conditionMessage(e)))
+        m <- result$m
         tibble::tibble(
           inner_fold = i, lambda = lam,
-          MAE = m$MAE, RMSE = m$RMSE, R2 = m$R2
+          MAE = m$MAE, RMSE = m$RMSE, R2 = m$R2, status=result$status
         )
       }))
     }) |>
@@ -211,7 +190,7 @@ tune_lambda_time_cv <- function(
         dplyr::transmute(
           inner_fold = fold,
           lambda = lam,
-          MAE = MAE, RMSE = RMSE, R2 = R2
+          MAE = MAE, RMSE = RMSE, R2 = R2, status = "ok"
         )
     }) |>
       dplyr::bind_rows()
@@ -225,6 +204,7 @@ tune_lambda_time_cv <- function(
     )
 
   best_rmse <- min(aggregate$mean_RMSE)
+  if (!is.finite(best_rmse)) stop("No lambda converged on every inner fold")
   within_tol <- aggregate$lambda[
     aggregate$mean_RMSE <= best_rmse * (1 + tie_tol)
   ]
@@ -279,7 +259,9 @@ make_tuned_model <- function(
       trace <- tune$grid |>
         dplyr::mutate(
           model = model_id,
-          outer_train_end = max(train_data$time_index)
+          outer_train_end = max(train_data$time_index),
+          test_start = min(test_data$time_index), test_end = max(test_data$time_index),
+          task_horizon = dplyr::n_distinct(test_data$time_index)
         )
       if (is.null(trace_env$traces)) trace_env$traces <- list()
       trace_env$traces[[length(trace_env$traces) + 1L]] <- trace

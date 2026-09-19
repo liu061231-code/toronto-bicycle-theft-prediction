@@ -10,14 +10,13 @@
 dplyr
 tidyr
 readr
-purrr
 tibble
-stringr
-forcats
 lubridate
 ggplot2
 scales
 splines
 glmnet
 MASS
-mgcv
+digest
+jsonlite
+testthat

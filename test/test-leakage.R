@@ -3,7 +3,7 @@
 # perturbing future records must not change historical training features or
 # fitted parameters. This is the core "future perturbation invariance" check.
 
-source(file.path(TEST_ROOT, "test", "test_helper.R"))
+source(file.path(TEST_ROOT, "test", "helper.R"))
 
 build_panel <- function() {
   raw <- make_synthetic_raw(n_neighborhoods = 5, n_years = 5, with_nsa = TRUE)
@@ -27,7 +27,7 @@ recipe_fingerprint <- function(recipe) {
   )
 }
 
-test_that("coordinates are fixed geographic constants, independent of future", {
+test_that("frozen coordinate estimates are independent of future records", {
   panel <- build_panel()
 
   # Train on the early window only.
@@ -181,6 +181,7 @@ test_that("make_monthly_panel defaults to the frozen reference file, not raw", {
     panel <- make_monthly_panel(raw)$panel,
     "reference"
   )
-  expect_true(all(is.na(panel$lon)))
-  expect_true(all(is.na(panel$lat)))
+  expect_true(all(is.na(panel$lon[panel$is_unknown])))
+  expect_true(all(is.na(panel$lat[panel$is_unknown])))
+  expect_equal(sum(panel$theft_count),nrow(raw))
 })

@@ -39,11 +39,28 @@ env/
 R/
 handbook/
 deliverables/
-docs/
 tests/
 tmp/
 .worktrees/
 .superpowers/
+
+# Public project documentation is allow-listed below; internal handoffs stay local.
+CODEX_HANDOFF.md
+handoff.md
+feedback2.0.md
+OPTIMIZATION_COMPLETION.md
+
+# Keep only the publication narrative and the approved design/plan records.
+docs/*
+!docs/project_introduction.md
+!docs/superpowers/
+docs/superpowers/*
+!docs/superpowers/specs/
+docs/superpowers/specs/*
+!docs/superpowers/specs/2026-09-19-github-portfolio-design.md
+!docs/superpowers/plans/
+docs/superpowers/plans/*
+!docs/superpowers/plans/2026-09-19-github-portfolio.md
 
 # Legacy scripts only; the data-acquisition and reference-table scripts
 # below are kept (explicit negations).
@@ -70,7 +87,11 @@ output/figures/08_residual_map.png
 output/figures/toronto_bicycle_theft_animation_poster.png
 
 # --- Generated model artifacts ---
-output/models/
+output/models/*
+!output/models/*_metadata.json
+output/archive/
+renv/library/
+renv/staging/
 *.rds
 *.RData
 *.feather

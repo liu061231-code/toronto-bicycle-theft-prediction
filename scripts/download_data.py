@@ -58,6 +58,7 @@ def query_page(offset):
         "outSR": "4326",
         "resultOffset": offset,
         "resultRecordCount": PAGE_SIZE,
+        "orderByFields": "OBJECTID ASC",
         "f": "json",
     }
     url = BASE + "/query?" + urllib.parse.urlencode(params)
@@ -73,8 +74,21 @@ def query_page(offset):
     return data
 
 
+def query_ids():
+    params = {"where": "1=1", "returnIdsOnly": "true", "f": "json"}
+    with urllib.request.urlopen(BASE + "/query?" + urllib.parse.urlencode(params), timeout=120) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if "error" in data or not isinstance(data.get("objectIds"), list):
+        raise RuntimeError("Invalid ArcGIS object ID manifest")
+    ids = data["objectIds"]
+    if any(i is None for i in ids) or len(set(ids)) != len(ids):
+        raise RuntimeError("Invalid or duplicate manifest IDs")
+    return set(ids)
+
+
 def fetch_all():
     """Download all pages and return (rows, object_ids)."""
+    expected_ids = query_ids()
     rows = []
     object_ids = []
     offset = 0
@@ -88,12 +102,18 @@ def fetch_all():
             attrs = f.get("attributes", {})
             rows.append({k: attrs.get(k) for k in FIELDS})
             object_ids.append(attrs.get("OBJECTID"))
+        if (None in object_ids or len(set(object_ids)) != len(object_ids)
+                or not set(object_ids).issubset(expected_ids)):
+            raise RuntimeError("Missing, duplicate or unexpected OBJECTID during pagination")
         offset += len(feats)
         page += 1
         if not data.get("exceededTransferLimit", False):
             break
         if offset % 10000 < PAGE_SIZE:
             print("  downloaded %d rows ..." % offset, flush=True)
+    if (None in object_ids or len(set(object_ids)) != len(object_ids)
+            or set(object_ids) != expected_ids or query_ids() != expected_ids):
+        raise RuntimeError("Incomplete download or source changed during pagination")
     return rows, object_ids
 
 
@@ -114,6 +134,8 @@ def main():
 
     # Object primary-key duplicate check: OBJECTID must be unique per record.
     non_null_ids = [o for o in object_ids if o is not None]
+    if len(non_null_ids) != len(rows):
+        raise RuntimeError("Missing OBJECTID; refusing to write")
     n_dup = len(non_null_ids) - len(set(non_null_ids))
     if n_dup > 0:
         raise RuntimeError(

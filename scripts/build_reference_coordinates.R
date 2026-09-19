@@ -13,7 +13,7 @@
 #
 # IMPORTANT HONESTY NOTE:
 #   These are TRAINING-PERIOD ESTIMATES (medians of event coordinates during
-#   2014-2023), not official geographic constants. A neighbourhood's true
+#   2014-2017), not official geographic constants. A neighbourhood's true
 #   centroid is time-invariant, but this table is an estimate of it from a
 #   specific data snapshot; the README and data dictionary describe it as
 #   such. If an official City of Toronto neighbourhood-centroid table is
@@ -34,7 +34,7 @@ script_path <- (function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- args[grepl("^--file=", args)]
   if (length(file_arg)) {
-    return(normalizePath(sub("^--file=", "", file_arg[1])))
+    return(normalizePath(gsub("~+~", " ", sub("^--file=", "", file_arg[1]), fixed=TRUE)))
   }
   normalizePath(getwd())
 })()
@@ -43,9 +43,9 @@ ROOT <- normalizePath(file.path(dirname(script_path), ".."), mustWork = TRUE)
 source(file.path(ROOT, "src", "config.R"))
 source(file.path(ROOT, "src", "prepare_data.R"))
 
-# The frozen estimation window: the main training period. Post-2023 events
+# The frozen estimation window: the main training period. Post-2017 events
 # never influence this table.
-FREEZE_END <- as.Date("2023-12-31")
+FREEZE_END <- as.Date("2017-12-31")
 
 main <- function() {
   paths <- project_paths(ROOT)
