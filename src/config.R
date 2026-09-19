@@ -91,6 +91,14 @@ ensure_packages <- function(packages = required_packages) {
 # fold assignment, stochastic model fits).
 random_seed <- 2023L
 
+# The default keeps the published 2025 retrospective reproducible. Scheduled
+# annual jobs override this with STAT3888_END_YEAR after a complete-year gate.
+START_YEAR <- 2014L
+END_YEAR <- as.integer(Sys.getenv("STAT3888_END_YEAR", "2025"))
+if (is.na(END_YEAR) || END_YEAR < START_YEAR) {
+  stop("STAT3888_END_YEAR must be an integer >= ", START_YEAR)
+}
+
 # Column names expected in the raw dataset (schema check). The two identifier
 # columns (`objectid`, `event_unique_id`) are optional for backward
 # compatibility with the legacy schema but are required for the counting

@@ -5,8 +5,8 @@
 # a clear annual cycle). A random train/test split would leak future
 # information into training, so all validation is chronological:
 #
-#   - descriptive retrospective window = calendar year 2025
-#   - expanding-window CV      = hyperparameter selection on 2014-2024 only
+#   - descriptive retrospective window = the configured END_YEAR
+#   - expanding-window CV      = hyperparameter selection before END_YEAR
 #
 # Expanding-window CV trains on all data up to a cutoff and evaluates on the
 # following window, then rolls the cutoff forward. This mirrors how the model
@@ -15,17 +15,18 @@
 
 # Chronological split into train / validation / test by year.
 #
-# With the refreshed dataset (through 2025), the split is:
-#   train      = 2014-2023
-#   validation = 2024
-#   test       = 2025
 # The retrospective set is a repeatedly viewed recent year; validation is used
 # only for the tuned model's hyperparameter selection via CV on train+val.
-split_panel <- function(panel) {
+split_panel <- function(panel, retrospective_year = END_YEAR) {
+  train_end <- retrospective_year - 2L
+  validation_year <- retrospective_year - 1L
+  if (!all(c(validation_year, retrospective_year) %in% panel$year)) {
+    stop("Panel does not contain the requested retrospective year window")
+  }
   list(
-    train = dplyr::filter(panel, year <= 2023),
-    validation = dplyr::filter(panel, year == 2024),
-    test = dplyr::filter(panel, year == 2025)
+    train = dplyr::filter(panel, year <= train_end),
+    validation = dplyr::filter(panel, year == validation_year),
+    test = dplyr::filter(panel, year == retrospective_year)
   )
 }
 

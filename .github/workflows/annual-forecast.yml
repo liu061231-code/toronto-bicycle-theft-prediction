@@ -1,0 +1,55 @@
+name: annual-forecast
+
+on:
+  schedule:
+    - cron: "23 3 7 1 *"
+  workflow_dispatch:
+    inputs:
+      complete_year:
+        description: "Most recent complete occurrence year"
+        required: true
+        default: "2026"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    env:
+      COMPLETE_YEAR: ${{ inputs.complete_year || '2026' }}
+      RENV_CONFIG_REPOS_OVERRIDE: "https://packagemanager.posit.co/cran/latest"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/download_data.py
+      - run: python3 scripts/convert_data.py
+      - run: python3 scripts/check_complete_year.py "$COMPLETE_YEAR"
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-renv@v2
+      - name: Run complete-year retrospective pipeline
+        env:
+          STAT3888_END_YEAR: ${{ env.COMPLETE_YEAR }}
+        run: Rscript src/run_pipeline.R
+      - name: Fit and export next-year forecast
+        env:
+          STAT3888_END_YEAR: ${{ env.COMPLETE_YEAR }}
+        run: Rscript src/forecast_next_year.R "$COMPLETE_YEAR"
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/annual-forecast
+          delete-branch: true
+          title: "feat(forecast): publish next-year annual forecast"
+          commit-message: "feat(forecast): publish next-year annual forecast"
+          body: |
+            Automated annual forecast trained only after the complete-year gate.
+            The pull request includes the forecast CSV, manifest, and model metadata.
+          add-paths: |
+            output/forecasts
+            output/models/forecast_*_metadata.json

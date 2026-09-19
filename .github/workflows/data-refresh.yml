@@ -1,0 +1,36 @@
+name: monthly-data-refresh
+
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/download_data.py
+      - run: python3 scripts/convert_data.py
+      - run: python3 scripts/build_data_refresh_manifest.py
+      - run: python3 -m unittest discover -s test -p 'test_*.py' -v
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/data-refresh
+          delete-branch: true
+          title: "chore(data): refresh official bicycle-theft snapshot"
+          commit-message: "chore(data): refresh official bicycle-theft snapshot"
+          body: |
+            Automated monthly refresh from the Toronto Police Service ArcGIS source.
+
+            Raw CSV snapshots remain ignored; review the generated provenance manifest
+            and CI checks before merging.
+          add-paths: |
+            output/data_refresh_manifest.json

@@ -105,8 +105,8 @@ audit_bicycle <- function(raw) {
 # The study period: from the first stable reporting year (2014) through the
 # last complete year available. 2026 is excluded from the modelling span
 # because it is still in progress (only ~6 months of records).
-START_YEAR <- 2014L
-END_YEAR   <- 2025L
+# START_YEAR and END_YEAR are defined in config.R. END_YEAR may be overridden
+# by scheduled annual jobs through STAT3888_END_YEAR.
 
 # Median event coordinates per neighbourhood.
 #
@@ -168,7 +168,7 @@ load_reference_coordinates <- function(
 #
 # The panel has one row per (neighbourhood, month) combination. Months with
 # no recorded thefts are filled with 0 so every neighbourhood has the same
-# number of monthly observations (2014-01 through 2025-12).
+# number of monthly observations (START_YEAR-01 through END_YEAR-12).
 #
 # COORDINATES (feedback2.0 P0 Task 1): spatial coordinates come from the
 # frozen, versioned reference table, NEVER from the raw events passed here.

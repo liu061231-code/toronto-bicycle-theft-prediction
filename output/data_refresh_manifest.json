@@ -1,0 +1,34 @@
+{
+  "conversion_manifest": {
+    "bicycle.csv": "bd942a7bcbe33ba673b7fdec9b2ff2b747cb0d530af4522e5d003d78fb3f640b",
+    "bicycle_enhanced.csv": "b47a0705892c5dc8eabd24f0eb75c50c37da42ccfb05b929f949b0b13c508e74"
+  },
+  "files": {
+    "bicycle.csv": {
+      "distinct_event_unique_id": 36398,
+      "distinct_objectid": 40524,
+      "occurrence_date_max": "2026-06-30",
+      "occurrence_date_min": "2014-01-01",
+      "rows": 40524,
+      "sha256": "bd942a7bcbe33ba673b7fdec9b2ff2b747cb0d530af4522e5d003d78fb3f640b"
+    },
+    "bicycle_enhanced.csv": {
+      "distinct_event_unique_id": 36398,
+      "distinct_objectid": 40524,
+      "occurrence_date_max": "2026-06-30",
+      "occurrence_date_min": "2014-01-01",
+      "rows": 40524,
+      "sha256": "b47a0705892c5dc8eabd24f0eb75c50c37da42ccfb05b929f949b0b13c508e74"
+    },
+    "bicycle_raw_latest.csv": {
+      "distinct_event_unique_id": 36449,
+      "distinct_objectid": 40583,
+      "occurrence_date_max": "2026-06-30",
+      "occurrence_date_min": "1975-08-16",
+      "rows": 40583,
+      "sha256": "55a50152f5615f8e197d7c2158335e4a293a1edefe7b7539ca82f8c0566b68da"
+    }
+  },
+  "schema_version": 1,
+  "source": "https://services.arcgis.com/S9th0jAJ7bqgIRjw/ArcGIS/rest/services/Bicycle_Thefts_Open_Data/FeatureServer/0"
+}

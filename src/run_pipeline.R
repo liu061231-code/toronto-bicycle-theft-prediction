@@ -7,17 +7,17 @@
 # Flow:
 #   1. load & audit raw data
 #   2. build monthly panel
-#   3. time-aware split (train 2014-2023 / validation 2024 / retrospective 2025)
+#   3. time-aware split (train / validation / retrospective END_YEAR)
 #   4. rolling-origin backtests for TWO separate forecast tasks
 #      (horizon = 1 and horizon = 12) on the training span
 #   5. predeclared model selection per horizon (backtest metrics only)
-#   6. retrospective evaluation on 2025 (descriptive, never used for selection)
+#   6. retrospective evaluation on END_YEAR (descriptive, never used for selection)
 #   7. write comparison tables and diagnostic figures
 #
 # Model-selection rule (predeclared; keep README.md "Validation Strategy" in
 # sync): primary metric = mean outer-fold RMSE; tie-break = lower mean MAE
 # when mean RMSE differs by less than 1%; selection is made PER HORIZON.
-# 2025 retrospective scores are descriptive and do not change selection.
+# END_YEAR retrospective scores are descriptive and do not change selection.
 
 library(dplyr)
 
@@ -46,6 +46,7 @@ source(file.path(ROOT, "src", "artifacts.R"))
 main <- function() {
   paths <- project_paths(ROOT)
   ensure_packages()
+  retro_year <- END_YEAR
 
   dir.create(paths$figure_dir, recursive = TRUE, showWarnings = FALSE)
   dir.create(paths$table_dir, recursive = TRUE, showWarnings = FALSE)
@@ -61,7 +62,7 @@ main <- function() {
   panel <- prepared$panel
 
   message("3/7 Splitting data (time-aware) ...")
-  splits <- split_panel(panel)
+  splits <- split_panel(panel, retrospective_year = retro_year)
   train <- splits$train
   validation <- splits$validation
   test <- splits$test
@@ -118,10 +119,10 @@ main <- function() {
 
   # --- Task B: horizon = 1 (monthly updating) -----------------------------
   # Monthly rolling origins over the LAST 12 months of the training span
-  # (calendar 2024): each origin refits on everything before it and predicts
+  # (calendar END_YEAR - 1): each origin refits on everything before it and predicts
   # the next month. 12 origins keep the per-origin tuning cost bounded while
   # still sampling all seasons.
-  first_h1 <- min(train_val$time_index[train_val$year == 2024])
+  first_h1 <- min(train_val$time_index[train_val$year == retro_year - 1L])
   folds_h1 <- make_rolling_folds(
     train_val, horizon_months = 1L, min_train_months = 60L,
     first_test_index = first_h1
@@ -153,8 +154,8 @@ main <- function() {
   message("  horizon=12 selects: ", selected_h12)
   message("  horizon=1  selects: ", selected_h1)
 
-  message("6/7 Retrospective evaluation on 2025 (descriptive only) ...")
-  # 2025 is a REPEATEDLY-VIEWED retrospective window: every score here is
+  message("6/7 Retrospective evaluation on ", retro_year, " (descriptive only) ...")
+  # END_YEAR is a REPEATEDLY-VIEWED retrospective window: every score here is
   # descriptive and played no role in model selection. All candidate models
   # are refit on train+validation; tuned models re-tune on train_val through
   # the same nested chronological protocol (trace recorded separately).
@@ -204,7 +205,7 @@ main <- function() {
     final_traces
   )
 
-  # Predictions on the 2025 retrospective window for the selected model of
+  # Predictions on the retrospective window for the selected model of
   # each horizon (if the horizons agree, one set is produced once).
   selected_models <- unique(c(selected_h12, selected_h1))
   artifacts <- list()
@@ -244,7 +245,7 @@ main <- function() {
     backtest_summary, file.path(paths$table_dir, "backtest_summary.csv")
   )
   readr::write_csv(
-    retrospective, file.path(paths$table_dir, "retrospective_2025.csv")
+    retrospective, file.path(paths$table_dir, paste0("retrospective_", retro_year, ".csv"))
   )
   readr::write_csv(
     tuning_traces, file.path(paths$table_dir, "tuning_traces.csv")
@@ -288,21 +289,21 @@ main <- function() {
       file.path(
         paths$figure_dir, paste0("04_observed_vs_predicted_", slug, ".png")
       ),
-      plot_observed_vs_predicted(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm,"| 2025 annual-batch retrospective")),
+      plot_observed_vs_predicted(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm, "|", retro_year, "annual-batch retrospective")),
       width = 9, height = 5.4, dpi = 180, bg = "white"
     )
     ggplot2::ggsave(
       file.path(
         paths$figure_dir, paste0("05_residual_distribution_", slug, ".png")
       ),
-      plot_residual_distribution(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm,"| 2025 annual-batch retrospective")),
+      plot_residual_distribution(prediction_sets[[nm]]) + ggplot2::labs(subtitle=paste(nm, "|", retro_year, "annual-batch retrospective")),
       width = 9, height = 5.4, dpi = 180, bg = "white"
     )
   }
 
   message("Done. Backtest summary (selection basis):")
   print(backtest_summary, n = Inf)
-  message("\nRetrospective 2025 (descriptive only):")
+  message("\nRetrospective ", retro_year, " (descriptive only):")
   print(retrospective, n = Inf)
   for (nm in selected_models) {
     er <- error_reports[[nm]]
@@ -318,7 +319,10 @@ main <- function() {
   manifest <- list(generated_at=format(Sys.time(),tz="UTC"),data_hash=data_hash,
     reference_hash=digest_file(paths$reference_coordinates),
     selected_h1=selected_h1,selected_h12=selected_h12,
-    retrospective_protocol="Fit through 2024; predict all 12 months of 2025 without updating",
+    retrospective_protocol = sprintf(
+      "Fit through %d; predict all 12 months of %d without updating",
+      retro_year - 1L, retro_year
+    ),
     files=files, session_info=capture.output(sessionInfo()))
   jsonlite::write_json(manifest,file.path(paths$root,"output","run_manifest.json"),pretty=TRUE,auto_unbox=TRUE)
   invisible(list(

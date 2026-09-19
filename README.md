@@ -420,9 +420,24 @@ year.
 - **Deployment**: retrain on a rolling window and forecast the next month for
   city resource planning.
 
+## Automated refresh and forecasting
+
+The repository includes two scheduled GitHub Actions. `monthly-data-refresh`
+downloads the official ArcGIS snapshot, verifies pagination and identifiers,
+converts it atomically, and opens a reviewable pull request containing only
+`output/data_refresh_manifest.json` (large raw CSV files stay out of git).
+`annual-forecast` runs on 7 January, requires all twelve occurrence months of
+the configured complete year, reruns the chronological pipeline, and opens a
+pull request with the next-year forecast CSV, manifest, and model metadata.
+Both workflows can also be started manually. They never silently overwrite
+`main`; a human reviews and merges each pull request. A fresh snapshot is not
+evidence that the target is a distinct-crime count: the project continues to
+forecast published record rows, as documented below.
+
 ## Repository Structure
 
 ```
+
 ├── README.md
 ├── data_dictionary.md   # counting / time / geography / duplication calibre
 ├── requirements.txt

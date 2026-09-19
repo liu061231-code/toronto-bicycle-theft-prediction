@@ -7,6 +7,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
 import convert_data as c
 import download_data as d
+import build_data_refresh_manifest as m
 
 class ConversionTests(unittest.TestCase):
     def fixture(self, root):
@@ -63,5 +64,29 @@ class DownloadCompletenessTests(unittest.TestCase):
         page={"features":[{"attributes":{"OBJECTID":1}}]}
         with mock.patch.object(d,"query_ids",return_value={1}),mock.patch.object(d,"query_page",return_value=page):
             self.assertEqual(d.fetch_all()[1],[1])
+
+
+class RefreshManifestTests(unittest.TestCase):
+    def test_manifest_is_deterministic_and_tracks_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw = root / "data/raw"
+            raw.mkdir(parents=True)
+            rows = [
+                {"objectid": "1", "event_unique_id": "a", "occ_date": "2025-01-01"},
+                {"objectid": "2", "event_unique_id": "b", "occ_date": "2025-02-01"},
+            ]
+            for name in ("bicycle_raw_latest.csv", "bicycle.csv", "bicycle_enhanced.csv"):
+                with (raw / name).open("w", newline="") as fh:
+                    writer = csv.DictWriter(fh, fieldnames=rows[0])
+                    writer.writeheader()
+                    writer.writerows(rows)
+            (raw / "conversion_manifest.json").write_text('{"bicycle.csv":"abc"}')
+            with mock.patch.multiple(m, ROOT=root, RAW=raw, OUT=root / "manifest.json"):
+                first = m.build_manifest()
+                second = m.build_manifest()
+            self.assertEqual(first, second)
+            self.assertEqual(first["files"]["bicycle.csv"]["rows"], 2)
+            self.assertEqual(first["files"]["bicycle.csv"]["occurrence_date_max"], "2025-02-01")
 
 if __name__=="__main__":unittest.main()
