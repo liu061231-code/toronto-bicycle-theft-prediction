@@ -14,6 +14,20 @@ testthat::test_that("raw data has the documented grain and range", {
   )
 })
 
+testthat::test_that("neighbourhood coordinates are static source attributes", {
+  coordinate_counts <- raw |>
+    dplyr::distinct(neighborhood, long, lat) |>
+    dplyr::count(neighborhood, name = "coordinate_pairs")
+  testthat::expect_true(all(coordinate_counts$coordinate_pairs == 1L))
+
+  changing_coordinates <- raw
+  changing_coordinates$long[1] <- changing_coordinates$long[1] + 0.01
+  testthat::expect_error(
+    make_monthly_panel(changing_coordinates),
+    "Coordinates must be static within neighbourhood"
+  )
+})
+
 testthat::test_that("monthly panel is complete", {
   panel <- result$panel
   testthat::expect_equal(nrow(panel), 140 * 120)

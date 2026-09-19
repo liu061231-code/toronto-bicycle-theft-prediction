@@ -46,14 +46,25 @@ audit_bicycle <- function(raw) {
   )
 }
 
-make_monthly_panel <- function(raw) {
-  coordinates <- raw |>
-    dplyr::group_by(neighborhood) |>
-    dplyr::summarise(
-      lon = stats::median(long),
-      lat = stats::median(lat),
-      .groups = "drop"
+validate_static_neighborhood_coordinates <- function(raw) {
+  changing <- raw |>
+    dplyr::distinct(neighborhood, long, lat) |>
+    dplyr::count(neighborhood, name = "coordinate_pairs") |>
+    dplyr::filter(coordinate_pairs != 1L)
+  if (nrow(changing)) {
+    stop(
+      "Coordinates must be static within neighbourhood. Affected: ",
+      paste(changing$neighborhood, collapse = "; "),
+      call. = FALSE
     )
+  }
+  invisible(TRUE)
+}
+
+make_monthly_panel <- function(raw) {
+  validate_static_neighborhood_coordinates(raw)
+  coordinates <- raw |>
+    dplyr::distinct(neighborhood, lon = long, lat)
 
   months <- seq(as.Date("2014-01-01"), as.Date("2023-12-01"), by = "month")
   panel <- raw |>
