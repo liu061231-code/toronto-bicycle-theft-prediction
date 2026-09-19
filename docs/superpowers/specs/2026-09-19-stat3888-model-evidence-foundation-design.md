@@ -16,7 +16,7 @@ This is the first of three bounded improvements:
 
 ## Current State
 
-The `codex/stat3888-model-improvement` branch already provides:
+The `model-improvement` branch already provides:
 
 - five expanding-window validation folds for 2018--2022;
 - an untouched 2023 test set;
