@@ -93,5 +93,5 @@ feedback2.0 对应的主要工程任务已经完成：
 
 - 原始数据已备份至 `data/raw_backup/`（已 gitignore）。
 - 数据快照哈希已更新（见 `data_manifest.md`）。
-- 所有修改仅在约定项目目录内，未触碰原课程项目 `/Users/liumingyuan/Documents/project of stat38888`。
+- 所有修改仅在当前项目副本内，未触碰原课程项目。
 - 上传 GitHub 仍未完成（账号权限问题），需用户确认目标后再处理。
