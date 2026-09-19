@@ -1,15 +1,20 @@
 # Toronto Bicycle Theft Prediction
 
-A spatio-temporal machine learning project that forecasts monthly bicycle theft
-counts across Toronto neighbourhoods, combining spline-based temporal trend
+A spatio-temporal machine learning project that forecasts monthly published
+bicycle-theft record counts across Toronto neighbourhoods, combining temporal
 modelling, seasonal harmonics, and radial-basis-function spatial smoothing —
 plus a descriptive hourly hotspot analysis that explores when and where thefts
 concentrate within the day.
 
+> This project began as a STAT3888 spatio-temporal data science course
+> assignment and was extended into a reproducible research portfolio project.
+> See the [bilingual project introduction](docs/project_introduction.md) for
+> the full story, methodology, limitations, and research framing.
+
 ## Overview
 
-This repository builds a predictive model for **monthly reported bicycle thefts
-per neighbourhood** in the City of Toronto over 2014–2025. The data are a
+This repository builds a predictive model for **monthly bicycle-theft record
+rows per neighbourhood** in the City of Toronto over 2014–2025. The data are a
 balanced panel (141 neighbourhood units × 144 months) with strong temporal
 autocorrelation, a pronounced annual cycle, and heavy over-dispersion in the
 count target. The goal is a model that generalises to *unseen future months*
@@ -27,7 +32,7 @@ course, and has since been reworked into a standalone predictive-modelling
 project: a rigorous time-aware validation strategy, fair baseline and
 multi-model comparison, nested chronological hyperparameter tuning, and
 interpretable diagnostics. The dataset was subsequently refreshed from the
-official open-data source (40,583 incident records, now spanning 2014–2026),
+official open-data source (40,583 published rows, now spanning 2014–2026),
 which extended the study period through 2025 and unlocked two new signal
 fields — **hour of day** and **premises type** — used in the hotspot analysis.
 
@@ -39,11 +44,56 @@ the monthly-updating task, while the ridge-on-log model wins the annual-ahead
 task (see Model Comparison). Calendar 2025 is kept as a repeatedly-viewed
 *retrospective* window and plays no role in selection.
 
+## Project architecture
+
+```mermaid
+flowchart LR
+    A[Official Toronto Police<br/>open-data snapshot] --> B[scripts/download_data.py<br/>ArcGIS pagination + ID completeness]
+    B --> C[scripts/convert_data.py<br/>schema checks + atomic conversion]
+    C --> D[data/raw/bicycle.csv<br/>and bicycle_enhanced.csv]
+    D --> E[src/prepare_data.R<br/>audit + monthly panel]
+    R[data/reference/<br/>neighborhood_coordinates.csv] --> E
+    E --> F[src/features.R<br/>time, season, spatial, context features]
+    F --> G[src/validation.R + src/backtest.R<br/>chronological folds]
+    G --> H[src/models.R<br/>baselines, Ridge, Poisson, NB]
+    H --> I[src/run_pipeline.R<br/>horizon-specific selection]
+    I --> J[output/tables/<br/>backtests, predictions, diagnostics]
+    I --> K[output/models/<br/>RDS + provenance metadata]
+    K --> L[src/predict.R<br/>future forecast from cutoff]
+    D --> M[src/hotspot_analysis.R<br/>descriptive hourly analysis]
+    M --> N[output/figures/<br/>hour and premises plots]
+    style A fill:#e8f1f5,stroke:#1b4965
+    style I fill:#fff3cd,stroke:#b7791f
+    style K fill:#e6f4ea,stroke:#2f855a
+```
+
+## Research journey and improvement loop
+
+```mermaid
+flowchart TD
+    A[STAT3888 course assignment<br/>initial spatio-temporal model] --> B[Initial panel and baseline models]
+    B --> C[Audit the score and data-generating process]
+    C --> D{What can leak<br/>or mislead?}
+    D --> E[Future-derived coordinates]
+    D --> F[Random / unfair validation]
+    D --> G[Ambiguous record and late-reporting fields]
+    E --> H[Frozen training-period coordinate reference]
+    F --> I[Nested chronological tuning<br/>horizon 1 and horizon 12]
+    G --> J[Source IDs, report dates,<br/>download and conversion manifests]
+    H --> K[Refresh official data and<br/>add hour/premises fields]
+    I --> K
+    J --> K
+    K --> L[Compare Ridge, penalised Poisson,<br/>NB and transparent baselines]
+    L --> M[Save model artifacts,<br/>hashes, tests and figures]
+    M --> N[GitHub research portfolio<br/>with explicit limitations]
+```
+
 ## Problem Definition
 
 - **Task type**: supervised regression (count prediction).
-- **Prediction target**: `theft_count` — the number of bicycle thefts reported
-  in a given neighbourhood during a given calendar month.
+- **Prediction target**: `theft_count` — the number of published record rows
+  for a given neighbourhood and occurrence month. Repeated event IDs mean this
+  is not yet verified as a count of distinct cases or bicycles.
 - **Features**: temporal position (month index), calendar month (seasonality),
   neighbourhood identity and centroid coordinates (spatial structure), and
   neighbourhood-level context (historical share of outdoor and commercial
@@ -62,7 +112,7 @@ task (see Model Comparison). Calendar 2025 is kept as a repeatedly-viewed
   coordinates. Location coordinates are deliberately offset to the nearest road
   intersection by the publisher for privacy; all analysis is therefore at
   neighbourhood, not address, granularity.
-- **Scale**: 40,524 incident records (2014–2026) → 20,304 neighbourhood-month
+- **Scale**: 40,524 published rows (2014–2026) → 20,304 neighbourhood-month
   observations (141 neighbourhood units × 144 months, 2014-01 to 2025-12;
   140 named neighbourhoods + the `NSA` unknown area).
 - **Key variables**: `date`, `neighborhood`, `bike_cost`, `location`
@@ -75,8 +125,8 @@ The raw CSV is not redistributed in this repository. To reproduce, run
 the current official dataset and convert it to the two files the pipeline
 expects under `data/raw/`:
 
-- `bicycle.csv` — legacy schema used by the monthly model
-  (`date, quarter, day_of_week, neighborhood, bike_cost, location, long, lat`);
+- `bicycle.csv` — schema used by the monthly model, including `objectid`,
+  `event_unique_id`, occurrence/report dates and the modelling fields;
 - `bicycle_enhanced.csv` — additional fields (`hour`, `premises_type`,
   `location_type`, `division`) used by the hourly hotspot analysis.
 
@@ -87,13 +137,19 @@ expects under `data/raw/`:
   neighbourhood; months with no thefts are filled with zero so every
   neighbourhood has a complete 144-month series (balanced panel). The
   in-progress 2026 records are excluded so the panel stays balanced.
+- **Availability**: converted files retain occurrence and report dates.
+  `records_as_of()` can exclude records reported after a chosen cutoff. Because
+  the repository has one current snapshot rather than historical snapshots,
+  this is an availability filter, not a complete reconstruction of past data
+  revisions.
 - **Data-quality audit**: the pipeline reports missing cells, exact duplicate
   rows, quarter-field inconsistencies, implausible `bike_cost` values, and the
   number of unknown-area (`NSA`) and zero-coordinate records.
 - **Coordinates**: neighbourhood centroids come from a **frozen reference
   table** (`data/reference/neighborhood_coordinates.csv`), built once from the
-  2014–2023 training window as the median of *valid* incident coordinates per
-  neighbourhood and treated as a fixed geographic constant thereafter. This
+  2014–2017 initial training window as the median of *valid* incident coordinates
+  per neighbourhood and frozen thereafter. It is a versioned training-period
+  estimate, rather than an official geographic centroid. This
   removes a subtle leakage channel: recomputing centroids from the full raw
   file would let future incidents move the spatial features of past training
   months. Records in the `NSA` unknown area (which carry zero/missing
@@ -218,8 +274,8 @@ tie-break mean MAE within 1%). Full per-fold results:
 | Recent 12-mo mean | 1.11 | 2.07 ± 0.57 | 0.241 | +40.0% | 3.22 |
 | Neighbourhood mean | 1.25 | 2.20 ± 0.58 | −0.036 | +64.4% | 3.28 |
 | Seasonal naive | 1.23 | 2.31 ± 0.81 | 0.447 | +8.0% | 3.42 |
-| Poisson (compact) | 1.41 | 2.49 ± 0.98 | 0.455 | +8.1% | 4.08 |
-| Negative-binomial | 1.47 | 2.64 ± 1.16 | 0.383 | +8.1% | 4.47 |
+| Poisson (compact) | 1.42 | 2.51 ± 0.99 | 0.448 | +8.1% | 4.11 |
+| Negative-binomial | 1.47 | 2.65 ± 1.16 | 0.377 | +16.8% | 4.44 |
 | Global mean | 2.17 | 3.57 ± 1.19 | −0.196 | +64.4% | 5.92 |
 
 **Horizon 12 — annual planning** (6 expanding annual origins, 2019–2024):
@@ -233,8 +289,8 @@ tie-break mean MAE within 1%). Full per-fold results:
 | Recent 12-mo mean | 1.53 | 3.10 ± 0.59 | 0.569 | +6.9% | 3.85 |
 | Poisson (area, tuned) | 1.64 | 3.65 ± 2.27 | 0.271 | +11.1% | 7.87 |
 | Global mean | 2.48 | 4.72 ± 0.68 | −0.005 | +12.4% | 5.82 |
-| Poisson (compact) | 2.72 | 5.92 ± 5.14 | −1.44 | +58.8% | 16.4 |
-| Negative-binomial | 3.82 | 8.90 ± 8.36 | −5.11 | +115.5% | 25.6 |
+| Poisson (compact) | 2.72 | 5.93 ± 5.11 | −1.44 | +58.8% | 16.3 |
+| Negative-binomial | 3.82 | 8.86 ± 8.30 | −5.04 | +116.3% | 25.4 |
 
 Reading of the two tables:
 
@@ -258,19 +314,18 @@ protocol as the ridge model (same grid, inner folds, metric, tie-break).
 ## Hourly Hotspot Analysis (operational extension)
 
 The refreshed dataset includes `OCC_HOUR` and `PREMISES_TYPE`, which the
-monthly panel discards. `src/hotspot_analysis.R` turns them into directly
-actionable findings:
+monthly panel discards. `src/hotspot_analysis.R` provides a descriptive view
+of these fields for complete calendar years 2014–2025:
 
-- **Two daily peaks**: thefts concentrate at midnight and during the evening
-  commute (17:00–18:00), with a deep trough before dawn (04:00–06:00).
+- **Highest recorded hours**: 18:00, 17:00 and 12:00 have the largest row
+  counts in the frozen snapshot. These counts do not adjust for exposure,
+  reporting behaviour or the number of bicycles present.
 - **Premises mix shifts by time of day**: outdoor theft dominates during
   daylight and evening hours (~30–33% of thefts), while apartment/house theft
   dominates overnight (~56% combined between 00:00–05:00).
 
-Operationally this suggests *time-targeted* patrol allocation: street-level
-patrols around transit corridors and commercial strips during the day and
-evening, and residential-building focus overnight — a much more efficient
-allocation than a uniform citywide sweep.
+These patterns can motivate operational hypotheses, but this observational
+analysis does not estimate the effect or cost effectiveness of patrol changes.
 
 ## Interpretation
 
@@ -295,21 +350,14 @@ Retrospective 2025 scores (descriptive only; models refit on 2014–2024, per
 | Poisson (area, tuned) | 1.06 | 1.69 | 0.754 | **+28.9%** |
 | Basis Ridge (tuned) | 0.83 | 1.98 | 0.661 | **−37.4%** |
 
-- **The log1p back-transform bias is a real, quantifiable mechanism — but not
-  yet a proven decomposition of the 2025 gap.** The ridge model fits
-  `log1p(Y)` and predicts `expm1(E[log1p(Y)|X])`, which by Jensen's inequality
-  is *below* the conditional count mean `E[Y|X]` whenever the conditional
-  distribution is non-degenerate. `src/backtransform_bias.R` quantifies this
-  *in-sample*: the log-scale residual SD is ~0.50, and on the training
-  distribution the mean of `expm1(mu)` is ~1.51 vs an actual mean of ~2.03 —
-  a structural downward bias of roughly 25% on the training level. What is
-  **not** established is how much of the ridge's −37% 2025 total bias this
-  mechanism explains: the 2025 level is also a decade low, so genuine
-  distribution shift acts in the same direction, and the Poisson model's
-  +29% over-prediction shows the two effects do not cancel cleanly. Splitting
-  the gap requires a dedicated back-transform-correction experiment (planned;
-  see Future Improvements), so this README deliberately avoids a "X points
-  bias + Y points shift" decomposition.
+- **Training-only back-transform corrections do not improve the annual
+  backtest overall.** Across the six horizon-12 folds, naive Ridge has mean
+  RMSE 2.931 and mean total bias −5.9%; log-normal and Duan-smearing
+  corrections have RMSE 3.021/3.026 and bias +12.8%/+13.5%. Corrections help
+  some under-predicted folds and harm over-predicted folds. The experiment in
+  `output/tables/backtransform_corrections.csv` therefore rejects a simple
+  global multiplicative correction and provides no causal decomposition of
+  the 2025 gap.
 - **Residuals are approximately centred** near zero on the count scale for
   the selected models, indicating low average cell-level bias.
 - **Largest absolute errors occur at high-count cells**: the target is a
@@ -339,6 +387,9 @@ year.
   but not at address level.
 - **External covariates**: weather, population density, policing effort, and
   bike-infrastructure changes are absent from the dataset.
+- **Late reporting and revisions**: occurrence-month backtests use the current
+  snapshot. Report-date filtering is available, but exact historical database
+  states require versioned snapshots that are not available here.
 - **Repeatedly-viewed retrospective window**: the 2025 year has been reused
   across diagnostic rounds, so its scores are descriptive evidence, not a
   clean untouched hold-out. The rolling-origin backtests (not 2025) drive
@@ -355,10 +406,9 @@ year.
 
 ## Future Improvements
 
-- **Back-transform correction experiment**: add a smearing/Duan-style
-  correction to the ridge-on-log model, learned strictly from training folds,
-  to causally isolate how much of the under-prediction is Jensen bias versus
-  genuine level shift.
+- **Conditional calibration**: investigate time-varying or conditional
+  calibration only after pre-registering it in nested backtests; global
+  log-normal and Duan corrections did not improve mean annual RMSE.
 - **Penalised zero-inflated / negative-binomial** model to explicitly handle the
   ~55% zeros and over-dispersion (needs a package that penalises a NB/zio family).
 - **Online/rolling retraining** to track the sustained decline in theft volume.
@@ -376,6 +426,8 @@ year.
 ├── README.md
 ├── data_dictionary.md   # counting / time / geography / duplication calibre
 ├── requirements.txt
+├── renv.lock             # pinned R dependency graph
+├── LICENSE               # MIT license for repository code
 ├── .gitignore
 ├── data/
 │   └── raw/            # place downloaded CSVs here (not committed)
@@ -392,35 +444,39 @@ year.
 │   ├── backtest.R         # rolling-origin backtest engine (per horizon)
 │   ├── visualize.R        # EDA and diagnostic figures
 │   ├── hotspot_analysis.R # hourly/premises operational analysis
-│   ├── backtransform_bias.R # quantify log1p back-transform bias
+│   ├── backtransform_bias.R # training-only correction experiment
+│   ├── artifacts.R        # serialisable model fit/predict contract
+│   ├── predict.R          # forecast from a saved artifact
 │   └── run_pipeline.R     # end-to-end entry point
 ├── test/
-│   ├── test_helper.R      # synthetic-data builders
+│   ├── helper.R           # synthetic-data builders
 │   ├── run_tests.R        # R test entry point
 │   ├── test-data-quality.R  # NSA / coordinate / panel tests
 │   ├── test-leakage.R       # future-perturbation invariance
 │   ├── test-validation.R    # expanding-window fold tests
 │   ├── test-tuning.R        # nested chronological tuning tests
 │   ├── test-backtest.R      # backtest engine tests
-│   └── test_scripts.py      # download/convert error-handling tests
+│   ├── test-completion.R    # metric/artifact/as-of boundary tests
+│   ├── test_scripts.py      # downloader error-handling tests
+│   └── test_conversion.py   # conversion and completeness tests
 └── output/
     ├── figures/        # generated figures
-    └── tables/         # audit, CV, comparison, predictions
+    ├── models/         # local RDS models + committed provenance metadata
+    ├── tables/         # audits, backtests, tuning traces and predictions
+    └── run_manifest.json
 ```
 
 ## Reproducibility
 
 - **Language**: R (>= 4.2) for modelling; Python 3 for the data download and
   conversion scripts (standard library only).
-- **Dependencies**: see `requirements.txt` (or `required_packages` in
-  `src/config.R`). Install from R with
-  `install.packages(read_requirements())` (after
-  `source("src/config.R")`), or directly:
-  `install.packages(scan("requirements.txt", what = "character", comment.char = "#"))`.
+- **Dependencies**: `renv.lock` pins the complete package graph. Restore it
+  with `install.packages("renv")` followed by `renv::restore()`.
 - **Tests**: run the full suite from the project root:
   ```bash
   Rscript test/run_tests.R                 # R data/leakage/validation tests
-  python3 test/test_scripts.py             # download/convert error-handling tests
+  python3 -m unittest discover -s test -p 'test_*.py' -v
+  Rscript test/smoke_pipeline.R            # prepare/tune/save/reload/predict
   ```
 - **Fetch and prepare the data** (requires internet):
   ```bash
@@ -430,6 +486,11 @@ year.
 - **Run the monthly pipeline** from the project root:
   ```bash
   Rscript src/run_pipeline.R
+  ```
+- **Use a saved model artifact** (forecast is relative to its recorded training
+  cutoff):
+  ```bash
+  Rscript src/predict.R output/models/basis_ridge_tuned_.rds 12 output/forecast.csv
   ```
 - **Run the hourly hotspot analysis**:
   ```bash
@@ -443,14 +504,13 @@ year.
 1. **Validation must respect the data's structure.** With strong temporal and
    spatial dependence, chronological expanding-window CV is essential; random
    splits would leak information and overstate performance.
-2. **Neighbourhood and seasonality dominate the signal.** The final model's
+2. **Neighbourhood and seasonality dominate the signal.** The selected models'
    predictive power comes chiefly from spatial fixed effects and the annual
    cycle, not from complex non-linearities — this holds for count models too.
-3. **Match the link function to the target — and the model to the horizon.**
+3. **Match the model to the forecast horizon.**
    On the monthly-updating task a count link (Poisson, predicting `E[Y]`
-   directly) beats least squares on `log1p(Y)` once the count model is given
-   the same spatial structure and tuning budget, because the log1p
-   back-transform is downward-biased by Jensen's inequality. On the
+   directly) has the best RMSE once the count model is given the same spatial
+   structure and tuning protocol. On the
    annual-ahead task the same Poisson model is unstable and the tuned
    ridge-on-log wins on the tie-break. The earlier "ridge-on-log wins"
    conclusion was an artefact of an unfair comparison; "Poisson always wins"
@@ -459,9 +519,7 @@ year.
    variance on the 2025 retrospective; any candidate model must convincingly
    beat it to justify its complexity — on horizon 12 the ridge only does so
    via the tie-break.
-5. **Beware tidy causal decompositions.** The ridge's ~37% under-prediction
-   of the 2025 total is *consistent with* the quantified log1p back-transform
-   bias, but the 2025 level is simultaneously a decade low, and the Poisson
-   model over-predicts the same total by ~29%. Attributing the gap to one
-   cause without a dedicated correction experiment would be storytelling, not
-   evidence.
+5. **Calibration must be tested out of sample.** Global training-only
+   back-transform corrections improved some annual folds but worsened others,
+   raising mean RMSE. The project therefore retains the uncorrected Ridge and
+   does not assign the 2025 gap to a single cause.
