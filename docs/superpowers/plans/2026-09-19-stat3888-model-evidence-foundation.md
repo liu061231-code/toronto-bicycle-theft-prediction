@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only in the isolated `codex/stat3888-teacher-feedback` worktree.
+- Work only in the isolated `codex/stat3888-model-improvement` worktree.
 - Do not modify untracked PPTX, `.DS_Store`, `.superpowers`, or `tmp/teacher-feedback-revision` content.
 - Keep 2023 completely outside model selection.
 - Write every behavior test first and observe the expected failure before implementation.
