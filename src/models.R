@@ -218,6 +218,13 @@ model_ridge_log <- function(lambda = 1e-2) {
     x_train <- make_design_matrix(train_data, recipe)
     x_test <- make_design_matrix(test_data, recipe)
     y_train <- log1p(train_data$theft_count)
+    # glmnet's Gaussian standardisation rejects a constant response. This
+    # occurs legitimately in tiny chronological synthetic folds (and can
+    # occur in a genuinely quiet production window), for which the optimal
+    # prediction is simply that constant response on the log scale.
+    if (length(unique(y_train)) == 1L) {
+      return(rep.int(pmax(0, expm1(y_train[[1L]])), nrow(x_test)))
+    }
     fit <- glmnet::glmnet(
       x_train, y_train, alpha = 0, lambda = lambda, standardize = TRUE
     )
@@ -258,6 +265,12 @@ ridge_log_path_model <- list(
     recipe <- make_basis_recipe(train_data)
     x_train <- make_design_matrix(train_data, recipe)
     y_train <- log1p(train_data$theft_count)
+    if (length(unique(y_train)) == 1L) {
+      return(list(
+        recipe = recipe,
+        fit = list(constant_response = y_train[[1L]], lambda = lambda_grid)
+      ))
+    }
     fit <- glmnet::glmnet(
       x_train, y_train, alpha = 0,
       lambda = lambda_grid, standardize = TRUE
@@ -268,6 +281,9 @@ ridge_log_path_model <- list(
     make_design_matrix(test_data, recipe)
   },
   predict_x = function(fitted, x_test, lambda) {
+    if (!is.null(fitted$fit$constant_response)) {
+      return(rep.int(pmax(0, expm1(fitted$fit$constant_response)), nrow(x_test)))
+    }
     pred_log <- as.numeric(predict(fitted$fit, newx = x_test, s = lambda))
     pmax(0, expm1(pred_log))
   }

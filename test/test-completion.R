@@ -67,3 +67,16 @@ test_that("saved correction artifacts predict without evaluation labels", {
     unlink(f)
   }
 })
+
+test_that("ridge tuning handles a constant chronological response", {
+  source(file.path(TEST_ROOT,"test/helper.R"))
+  raw <- make_synthetic_raw(n_neighborhoods=2, n_years=6, with_nsa=FALSE)
+  d <- make_monthly_panel(raw, make_neighborhood_coordinates(raw))$panel
+  d$theft_count <- 0
+  tuned <- tune_lambda_time_cv(
+    d, c(1, .1), model_ridge_log, initial_months=36L,
+    step_months=12L, horizon_months=12L, path_model=ridge_log_path_model
+  )
+  expect_true(is.finite(tuned$best_lambda))
+  expect_true(all(is.finite(tuned$grid$RMSE)))
+})
