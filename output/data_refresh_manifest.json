@@ -1,32 +1,32 @@
 {
   "conversion_manifest": {
-    "bicycle.csv": "bd942a7bcbe33ba673b7fdec9b2ff2b747cb0d530af4522e5d003d78fb3f640b",
-    "bicycle_enhanced.csv": "b47a0705892c5dc8eabd24f0eb75c50c37da42ccfb05b929f949b0b13c508e74"
+    "bicycle.csv": "bc2cbceee1a7c7482b4819b181443eb658d3a653b1ff3d6c2e5972b984e4d9f7",
+    "bicycle_enhanced.csv": "4ec5ec27580343ffc1e7d5667810a943bb688ea174266e31e851072d7f5bff0c"
   },
   "files": {
     "bicycle.csv": {
-      "distinct_event_unique_id": 36398,
-      "distinct_objectid": 40524,
-      "occurrence_date_max": "2026-06-30",
+      "distinct_event_unique_id": 37173,
+      "distinct_objectid": 41352,
+      "occurrence_date_max": "2026-09-30",
       "occurrence_date_min": "2014-01-01",
-      "rows": 40524,
-      "sha256": "bd942a7bcbe33ba673b7fdec9b2ff2b747cb0d530af4522e5d003d78fb3f640b"
+      "rows": 41352,
+      "sha256": "bc2cbceee1a7c7482b4819b181443eb658d3a653b1ff3d6c2e5972b984e4d9f7"
     },
     "bicycle_enhanced.csv": {
-      "distinct_event_unique_id": 36398,
-      "distinct_objectid": 40524,
-      "occurrence_date_max": "2026-06-30",
+      "distinct_event_unique_id": 37173,
+      "distinct_objectid": 41352,
+      "occurrence_date_max": "2026-09-30",
       "occurrence_date_min": "2014-01-01",
-      "rows": 40524,
-      "sha256": "b47a0705892c5dc8eabd24f0eb75c50c37da42ccfb05b929f949b0b13c508e74"
+      "rows": 41352,
+      "sha256": "4ec5ec27580343ffc1e7d5667810a943bb688ea174266e31e851072d7f5bff0c"
     },
     "bicycle_raw_latest.csv": {
-      "distinct_event_unique_id": 36449,
-      "distinct_objectid": 40583,
-      "occurrence_date_max": "2026-06-30",
+      "distinct_event_unique_id": 37224,
+      "distinct_objectid": 41411,
+      "occurrence_date_max": "2026-09-30",
       "occurrence_date_min": "1975-08-16",
-      "rows": 40583,
-      "sha256": "55a50152f5615f8e197d7c2158335e4a293a1edefe7b7539ca82f8c0566b68da"
+      "rows": 41411,
+      "sha256": "1e57fb0ed32458c914a93b5a548348566013498560315153fccd7c2c4eb22c82"
     }
   },
   "schema_version": 1,
